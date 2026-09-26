@@ -7,6 +7,7 @@
 
 use parking_lot::Mutex;
 use serde::Serialize;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 
 /// Emplacements retenus : équipement, runes (23-24), arcanes (41-45).
@@ -60,6 +61,26 @@ impl Etat {
     pub fn pret(&self) -> bool {
         self.nom.is_some() && (!self.equipement.is_empty() || self.item_level.is_some())
     }
+}
+
+/// Interrupteur de lecture, **fermé par défaut**. Il n'est ouvert que lorsqu'un
+/// jeton est enregistré ET que le partage est coché. Tant qu'il est fermé,
+/// `observer()` ressort immédiatement : aucun paquet n'est analysé, rien n'est
+/// gardé en mémoire, et le meter se comporte exactement comme la version
+/// d'origine d'A2Tools.
+static LECTURE_OUVERTE: AtomicBool = AtomicBool::new(false);
+
+/// Appelé par `envoi::configurer()` à chaque changement de réglage.
+pub fn ouvrir_lecture(ouverte: bool) {
+    let avant = LECTURE_OUVERTE.swap(ouverte, Ordering::Relaxed);
+    if avant && !ouverte {
+        // On vient de refermer : on n'a aucune raison de garder la fiche.
+        vider();
+    }
+}
+
+pub fn lecture_ouverte() -> bool {
+    LECTURE_OUVERTE.load(Ordering::Relaxed)
 }
 
 static ETAT: OnceLock<Mutex<Etat>> = OnceLock::new();
@@ -123,6 +144,11 @@ fn entete(packet: &[u8]) -> Option<([u8; 2], usize)> {
 // ---------------------------------------------------------------------------
 
 pub fn observer(packet: &[u8]) {
+    // Rien n'est lu tant qu'aucun jeton n'est enregistré et que le partage n'est
+    // pas coché. C'est le tout premier test, avant même de regarder le paquet.
+    if !lecture_ouverte() {
+        return;
+    }
     let Some((opcode, _apres)) = entete(packet) else {
         return;
     };

@@ -18,7 +18,7 @@ use std::sync::OnceLock;
 use std::time::Duration;
 use tracing::{info, warn};
 
-use super::collecte::{lire_etat, Etat};
+use super::collecte::{lire_etat, ouvrir_lecture, Etat};
 use super::URL_PAR_DEFAUT;
 
 /// Délai minimum entre deux envois. Une fiche de personnage ne change pas toutes
@@ -63,6 +63,9 @@ pub fn configurer(jeton: Option<String>, url: Option<String>, actif: bool) {
     c.jeton = jeton;
     c.url = url.filter(|u| !u.trim().is_empty());
     c.actif = actif;
+    // La lecture des paquets suit exactement ce réglage : pas de jeton ou case
+    // décochée, et le meter ne regarde plus rien.
+    ouvrir_lecture(c.jeton.is_some() && c.actif);
 }
 
 /// Ce que l'interface affiche dans l'onglet « Guilde XIII NRV ».
