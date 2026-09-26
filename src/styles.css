@@ -6763,3 +6763,20 @@ html.settingsWindow .meter {
   opacity: 0.55;
   text-align: center;
 }
+
+/* Logo de la guilde, à côté du titre des réglages. */
+.xiiinrvLogo {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+  margin-right: 8px;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+
+/* Le pied de page ne garde que la mention d'origine et le bouton Quitter. */
+.settingsFooter .xiiinrvOrigine {
+  flex: 1 1 auto;
+  text-align: left;
+  margin-top: 0;
+}

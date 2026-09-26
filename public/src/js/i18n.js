@@ -73,7 +73,30 @@ const createI18n = ({
     return parseJsonText(raw);
   };
 
+  // Le même fichier peut se trouver à plusieurs endroits selon qu'on tourne en
+  // développement ou dans l'application installée. On essaie chaque emplacement
+  // et on ne garde qu'une réponse qui est vraiment du JSON : en développement,
+  // le serveur renvoie la page HTML pour toute adresse inconnue, et c'est ce qui
+  // faisait échouer silencieusement le chargement des langues.
+  const cheminsPossibles = (path) => {
+    const nu = path.replace(/^\.\//, "").replace(/^\//, "");
+    return [path, `./src/data/${nu}`, `/src/data/${nu}`, `./data/${nu}`];
+  };
+
   const loadJson = async (path) => {
+    for (const candidat of cheminsPossibles(path)) {
+      try {
+        const res = await fetch(resolveUrl(candidat), { cache: "no-store" });
+        if (res.ok || res.status === 0) {
+          const texte = new TextDecoder("utf-8").decode(await res.arrayBuffer());
+          const data = parseJsonText(texte);
+          if (Object.keys(data).length) return data;
+        }
+      } catch {
+        // on essaie l'emplacement suivant
+      }
+    }
+
     const url = resolveUrl(path);
     try {
       const res = await fetch(url, { cache: "no-store" });

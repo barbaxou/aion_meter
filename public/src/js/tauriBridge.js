@@ -544,7 +544,13 @@
           xhr.open("GET", url, false); // synchronous
           xhr.send();
           if (xhr.status === 200 && xhr.responseText) {
-            return xhr.responseText;
+            // En développement, le serveur renvoie la page HTML pour toute
+            // adresse inconnue : sans ce contrôle, on prenait cette page pour
+            // un fichier de traduction et plus aucune langue ne s'appliquait.
+            const debut = xhr.responseText.trimStart().charAt(0);
+            if (debut === "{" || debut === "[") {
+              return xhr.responseText;
+            }
           }
         } catch {
           // try next
