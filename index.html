@@ -748,6 +748,31 @@
                       <div class="settingsDropdownMenu allTargetsWindowDropdownMenu" role="menu"></div>
                     </div>
                   </div>
+                  <!-- ====== Ajout XIII NRV : partage de build vers le site ====== -->
+                  <div class="settingsRow settingsSectionTitle">Guilde XIII NRV</div>
+                  <div class="settingsRow">
+                    <label class="settingsLabel" for="xiiinrvJeton">Jeton personnel</label>
+                    <input
+                      id="xiiinrvJeton"
+                      type="password"
+                      class="settingsInput"
+                      autocomplete="off"
+                      spellcheck="false"
+                      placeholder="collez ici le jeton du site" />
+                  </div>
+                  <div class="settingsRow">
+                    <label class="settingsLabel" for="xiiinrvActif">Partager ma fiche avec la guilde</label>
+                    <input id="xiiinrvActif" type="checkbox" class="settingsCheckbox" />
+                  </div>
+                  <div class="settingsRow">
+                    <pre id="xiiinrvEtat" class="settingsHint">Aucun jeton : le partage est à l'arrêt.</pre>
+                  </div>
+                  <div class="settingsRow settingsRowAction">
+                    <button id="xiiinrvEnvoyer" class="settingsAction" type="button">
+                      Envoyer ma fiche maintenant
+                    </button>
+                  </div>
+
                   <div class="settingsRow settingsRowAction">
                     <button
                       class="settingsAction settingsActionDanger resetAllSettingsBtn"
@@ -1006,6 +1031,7 @@
     <script src="/src/js/battleTime.js"></script>
     <script src="/src/js/meter.js"></script>
     <script src="/src/js/skillIcons.js"></script>
+    <script src="/src/js/xiiinrv.js"></script>
     <script src="/src/js/details.js?v=2021a"></script>
     <script src="/src/js/history.js?v=2018a"></script>
 

@@ -6,6 +6,8 @@ pub mod history;
 pub mod i18n;
 pub mod logging;
 pub mod platform;
+/// Ajout XIII NRV : partage de la fiche de personnage vers le site de la guilde.
+pub mod xiiinrv;
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -62,6 +64,19 @@ pub struct AppState {
 }
 
 // ===== TAURI COMMANDS =====
+
+#[tauri::command]
+/// Ajout XIII NRV : état du partage, pour l'onglet « Guilde XIII NRV ».
+fn xiiinrv_etat() -> xiiinrv::envoi::EtatPartage {
+    xiiinrv::etat_partage()
+}
+
+#[tauri::command]
+/// Ajout XIII NRV : envoi immédiat, déclenché par le bouton de l'interface.
+/// `async` pour ne pas bloquer l'interface pendant l'appel réseau.
+async fn xiiinrv_envoyer() -> Result<String, String> {
+    xiiinrv::envoyer_maintenant().await
+}
 
 #[tauri::command]
 fn get_app_version() -> &'static str {
@@ -134,6 +149,17 @@ fn update_settings(
 ) {
     if state.settings.set(&key, &value) {
         let _ = app.emit("setting-changed", serde_json::json!({ "key": key, "value": value }));
+    }
+
+    // Ajout XIII NRV : un réglage du partage vient de changer, on le répercute
+    // tout de suite — sinon il faudrait redémarrer le meter pour qu'il soit pris
+    // en compte.
+    if key.starts_with("xiiinrv_") {
+        crate::xiiinrv::envoi::configurer(
+            state.settings.get(crate::xiiinrv::CLE_JETON),
+            state.settings.get(crate::xiiinrv::CLE_URL),
+            state.settings.get(crate::xiiinrv::CLE_ACTIF).as_deref() == Some("true"),
+        );
     }
 }
 
@@ -1451,6 +1477,14 @@ pub fn run() {
                 logging::logger::set_packet_log_enabled(true, &app_data_dir);
             }
 
+            // Ajout XIII NRV : réglages du partage, lus avant que `settings` ne
+            // soit déplacé dans l'état de l'application.
+            let settings_pour_xiiinrv = (
+                settings.get(crate::xiiinrv::CLE_JETON),
+                settings.get(crate::xiiinrv::CLE_URL),
+                settings.get(crate::xiiinrv::CLE_ACTIF).as_deref() == Some("true"),
+            );
+
             let state = AppState {
                 data_storage: data_storage.clone(),
                 dps_calculator: Mutex::new(dps_calculator),
@@ -1463,6 +1497,14 @@ pub fn run() {
                 app_data_dir: app_data_dir.clone(),
                 i18n_data_dir: found_data_dir.clone(),
             };
+
+            // Ajout XIII NRV : partage de la fiche vers le site de la guilde.
+            crate::xiiinrv::envoi::configurer(
+                settings_pour_xiiinrv.0,
+                settings_pour_xiiinrv.1,
+                settings_pour_xiiinrv.2,
+            );
+            crate::xiiinrv::demarrer();
 
             app.manage(state);
 
@@ -1762,6 +1804,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            xiiinrv_etat,
+            xiiinrv_envoyer,
             get_app_version,
             get_dps_snapshot,
             get_skill_details,

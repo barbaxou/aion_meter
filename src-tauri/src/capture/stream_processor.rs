@@ -269,6 +269,11 @@ impl StreamProcessor {
             return false;
         }
 
+        // Ajout XIII NRV : on regarde passer les quatre paquets de la fiche de
+        // personnage. Ne modifie rien, ne bloque rien, et ne fait rien du tout
+        // tant qu'aucun jeton n'est renseigné.
+        crate::xiiinrv::observer(packet);
+
         let parsed_damage = self.parsing_damage(packet, true, false);
         let parsed_ownership = self.parse_summon_ownership_packet(packet);
         let parsed_summon = self.parse_summon_packet(packet);
