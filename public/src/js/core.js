@@ -2582,7 +2582,6 @@ class DpsApp {
 
     const themeOptions = [
       { value: "xiiinrv", label: "XIII NRV" },
-      { value: "aion2", label: this.i18n?.t("settings.theme.options.aion2", "AION2") },
       { value: "asmodian", label: this.i18n?.t("settings.theme.options.asmodian", "Asmodian") },
       { value: "cogni", label: this.i18n?.t("settings.theme.options.cogni", "Cogni") },
       { value: "elyos", label: this.i18n?.t("settings.theme.options.elyos", "Elyos") },

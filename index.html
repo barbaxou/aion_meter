@@ -402,26 +402,24 @@
                   <input
                     id="xiiinrvJeton"
                     type="password"
-                    class="characterNameInput"
+                    class="characterNameInput xiiinrvJetonInput"
                     autocomplete="off"
                     spellcheck="false"
                     placeholder="collez ici le jeton donné par le site"
                     data-i18n-placeholder="xiiinrv.tokenPlaceholder" />
                 </div>
-                <div class="settingsRow">
-                  <div class="settingsInfo">
-                    <div class="settingsLabel" data-i18n="xiiinrv.share">Partager ma fiche avec la guilde</div>
-                    <div class="settingsHint" data-i18n="xiiinrv.shareHint">
-                      Envoie votre équipement, vos pets et vos chiffres au site de la guilde.
-                      Sans jeton, rien n'est lu ni envoyé.
-                    </div>
-                  </div>
-                  <label class="settingsToggle">
+                <label class="settingsToggle">
+                  <span class="settingsToggleLabel settingsLabel" data-i18n="xiiinrv.share">Partager ma fiche avec la guilde</span>
+                  <span class="settingsToggleControl">
                     <input id="xiiinrvActif" type="checkbox" />
-                    <span class="settingsToggleTrack"><span class="settingsToggleThumb"></span></span>
-                  </label>
-                </div>
+                    <span class="settingsToggleTrack" aria-hidden="true"></span>
+                  </span>
+                </label>
                 <div class="settingsRow xiiinrvEtatRow">
+                  <div class="settingsHint" data-i18n="xiiinrv.shareHint">
+                    Envoie votre équipement, vos pets et vos chiffres au site de la guilde.
+                    Sans jeton, rien n'est lu ni envoyé.
+                  </div>
                   <pre id="xiiinrvEtat" class="settingsHint xiiinrvEtat">Aucun jeton : le partage est à l'arrêt.</pre>
                 </div>
                 <div class="settingsRow settingsRowAction">

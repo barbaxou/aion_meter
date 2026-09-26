@@ -452,10 +452,10 @@
 
     // --- Hotkeys ---
     getCurrentHotKey() {
-      return this.getSetting("dpsMeter.hotkey") || "Ctrl+Alt+Shift+R";
+      return this.getSetting("dpsMeter.hotkey") || "";
     },
     getCurrentToggleWindowHotKey() {
-      return this.getSetting("dpsMeter.toggleWindowHotkey") || "Ctrl+Alt+Up";
+      return this.getSetting("dpsMeter.toggleWindowHotkey") || "";
     },
     setHotkey(mods, vk) {
       const label = this._buildHotkeyLabel(mods, vk);

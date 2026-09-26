@@ -1589,10 +1589,13 @@ pub fn run() {
             let toggle_label = app.state::<AppState>().settings
                 .get("dpsMeter.toggleWindowHotkey").unwrap_or_default();
 
+            // Aucun raccourci par défaut : chacun met les siens s'il en veut.
+            // Un code de touche à zéro veut dire « ne rien enregistrer », ce que
+            // la couche Windows sait déjà traiter.
             let (reload_mods, reload_vk) = platform::hotkeys::parse_hotkey_label(&reload_label)
-                .unwrap_or((0x0002 | 0x0001, 0x52)); // Default: Ctrl+Alt+R
+                .unwrap_or((0, 0));
             let (toggle_mods, toggle_vk) = platform::hotkeys::parse_hotkey_label(&toggle_label)
-                .unwrap_or((0x0002 | 0x0001, 0x26)); // Default: Ctrl+Alt+Up
+                .unwrap_or((0, 0));
 
             hotkey_manager.start(
                 reload_mods, reload_vk,

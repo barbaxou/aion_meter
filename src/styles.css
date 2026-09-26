@@ -6738,7 +6738,32 @@ html.settingsWindow .meter {
   border-left: 2px solid rgba(212, 175, 55, 0.45);
 }
 
+/* La zone d'état occupe toute la largeur de la section, sinon la grille des
+   réglages la réduit à rien. */
+.xiiinrvGroup .xiiinrvEtatRow {
+  grid-column: 1 / -1;
+  display: block;
+  padding-top: 4px;
+}
+
+/* Le champ du jeton garde la hauteur des autres champs du panneau.
+   Le sélecteur reprend celui d'A2Tools, sinon le leur reste prioritaire. */
+.settingsPanel .settingsRowStacked .xiiinrvJetonInput {
+  /* Leur règle donne à ce champ une base de 60 px : dans une colonne flex,
+     c'est la hauteur. On la ramène à celle des autres champs. */
+  flex: 0 0 26px;
+  height: 26px;
+  min-height: 0;
+  line-height: 26px;
+  padding: 0 8px;
+}
+
 /* L'état du partage : plusieurs lignes, lisibles, sans casser la mise en page. */
+#xiiinrvEtat {
+  display: block;
+  width: 100%;
+}
+
 .xiiinrvEtat {
   margin: 0;
   white-space: pre-wrap;
@@ -6747,11 +6772,6 @@ html.settingsWindow .meter {
   font-size: 11px;
   line-height: 1.45;
   opacity: 0.85;
-}
-
-.xiiinrvEtatRow {
-  display: block;
-  padding-top: 2px;
 }
 
 /* Mention d'origine : le meter est un travail dérivé d'A2Tools, on le dit. */
@@ -6779,4 +6799,12 @@ html.settingsWindow .meter {
   flex: 1 1 auto;
   text-align: left;
   margin-top: 0;
+}
+
+/* Le champ du jeton doit rester saisissable : il est en lecture seule chez
+   A2Tools (nom du personnage détecté), pas chez nous. */
+.settingsPanel .xiiinrvJetonInput {
+  cursor: text;
+  user-select: text;
+  pointer-events: auto;
 }
