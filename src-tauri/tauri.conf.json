@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "A2Tools DPS Meter",
+  "productName": "XIII NRV Meter",
   "version": "2.0.26",
   "identifier": "com.a2tools.dps-meter",
   "build": {
@@ -13,7 +13,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "A2Tools DPS Meter",
+        "title": "XIII NRV Meter",
         "width": 400,
         "height": 300,
         "decorations": false,

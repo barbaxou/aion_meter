@@ -5,7 +5,7 @@
     <meta
       name="viewport"
       content="width=device-width, initial-scale=1" />
-    <title>A2Tools DPS Meter</title>
+    <title>XIII NRV Meter</title>
     <link
       href="/src/styles.css"
       rel="stylesheet"
@@ -393,6 +393,44 @@
             <button class="closeX settingsClose" type="button" aria-label="Close">×</button>
           </div>
           <div class="settingsBody">
+            <section class="settingsGroup xiiinrvGroup">
+              <div class="settingsMiniTitle" data-i18n="xiiinrv.title">Guilde XIII NRV</div>
+              <div class="settingsGroupBody settingsGroupStrip">
+                <div class="settingsRow settingsRowInput settingsRowStacked">
+                  <label class="settingsLabel" for="xiiinrvJeton" data-i18n="xiiinrv.token">Jeton personnel</label>
+                  <input
+                    id="xiiinrvJeton"
+                    type="password"
+                    class="characterNameInput"
+                    autocomplete="off"
+                    spellcheck="false"
+                    placeholder="collez ici le jeton donné par le site"
+                    data-i18n-placeholder="xiiinrv.tokenPlaceholder" />
+                </div>
+                <div class="settingsRow">
+                  <div class="settingsInfo">
+                    <div class="settingsLabel" data-i18n="xiiinrv.share">Partager ma fiche avec la guilde</div>
+                    <div class="settingsHint" data-i18n="xiiinrv.shareHint">
+                      Envoie votre équipement, vos pets et vos chiffres au site de la guilde.
+                      Sans jeton, rien n'est lu ni envoyé.
+                    </div>
+                  </div>
+                  <label class="settingsToggle">
+                    <input id="xiiinrvActif" type="checkbox" />
+                    <span class="settingsToggleTrack"><span class="settingsToggleThumb"></span></span>
+                  </label>
+                </div>
+                <div class="settingsRow xiiinrvEtatRow">
+                  <pre id="xiiinrvEtat" class="settingsHint xiiinrvEtat">Aucun jeton : le partage est à l'arrêt.</pre>
+                </div>
+                <div class="settingsRow settingsRowAction">
+                  <button id="xiiinrvEnvoyer" class="settingsAction" type="button"
+                          data-i18n="xiiinrv.send">
+                    Envoyer ma fiche maintenant
+                  </button>
+                </div>
+              </div>
+            </section>
             <section class="settingsGroup">
               <div class="settingsMiniTitle" data-i18n="settings.connection">Connection</div>
               <div class="settingsGroupBody settingsGroupStrip">
@@ -748,31 +786,6 @@
                       <div class="settingsDropdownMenu allTargetsWindowDropdownMenu" role="menu"></div>
                     </div>
                   </div>
-                  <!-- ====== Ajout XIII NRV : partage de build vers le site ====== -->
-                  <div class="settingsRow settingsSectionTitle">Guilde XIII NRV</div>
-                  <div class="settingsRow">
-                    <label class="settingsLabel" for="xiiinrvJeton">Jeton personnel</label>
-                    <input
-                      id="xiiinrvJeton"
-                      type="password"
-                      class="settingsInput"
-                      autocomplete="off"
-                      spellcheck="false"
-                      placeholder="collez ici le jeton du site" />
-                  </div>
-                  <div class="settingsRow">
-                    <label class="settingsLabel" for="xiiinrvActif">Partager ma fiche avec la guilde</label>
-                    <input id="xiiinrvActif" type="checkbox" class="settingsCheckbox" />
-                  </div>
-                  <div class="settingsRow">
-                    <pre id="xiiinrvEtat" class="settingsHint">Aucun jeton : le partage est à l'arrêt.</pre>
-                  </div>
-                  <div class="settingsRow settingsRowAction">
-                    <button id="xiiinrvEnvoyer" class="settingsAction" type="button">
-                      Envoyer ma fiche maintenant
-                    </button>
-                  </div>
-
                   <div class="settingsRow settingsRowAction">
                     <button
                       class="settingsAction settingsActionDanger resetAllSettingsBtn"
@@ -785,6 +798,10 @@
               </div>
             </section>
             <div class="settingsFooter">
+              <div class="xiiinrvOrigine">
+                XIII NRV Meter — version modifiée d'A2Tools DPS Meter (GPL-3.0),
+                adaptée pour la guilde XIII NRV.
+              </div>
               <div class="settingsFooterLinks">
                 <button class="discordButton" type="button">
                   <span class="discordIcon" aria-hidden="true">

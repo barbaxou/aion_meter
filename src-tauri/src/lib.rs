@@ -1447,7 +1447,7 @@ pub fn run() {
                 // Load skill/NPC data in the user's language
                 let language = Settings::new(app_data_dir.clone())
                     .get("dpsMeter.language")
-                    .unwrap_or_else(|| "en".to_string());
+                    .unwrap_or_else(|| "fr".to_string());
                 i18n::lookup::load_language(&skill_lookup, &npc_lookup, data_dir, &language);
             } else {
                 tracing::warn!("Failed to find data directory!");

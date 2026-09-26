@@ -346,5 +346,20 @@
       "normal": "Normal",
       "hard": "Hard"
     }
+  },
+  "xiiinrv": {
+    "character": "Character read",
+    "idle": "No token: sharing is off.",
+    "lastSend": "Last send",
+    "off": "Token saved, sharing unchecked.",
+    "send": "Send my character now",
+    "sending": "Sending…",
+    "share": "Share my character with the guild",
+    "shareHint": "Sends your gear, pets and numbers to the guild website. Without a token, nothing is read and nothing is sent.",
+    "title": "XIII NRV guild",
+    "token": "Personal token",
+    "tokenPlaceholder": "paste the token given by the website",
+    "unavailable": "Status unavailable",
+    "waiting": "Waiting: log in with your character and the meter will read its sheet."
   }
 }

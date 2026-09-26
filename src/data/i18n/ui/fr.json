@@ -346,5 +346,20 @@
       "normal": "Normal",
       "hard": "Difficile"
     }
+  },
+  "xiiinrv": {
+    "character": "Personnage lu",
+    "idle": "Aucun jeton : le partage est à l'arrêt.",
+    "lastSend": "Dernier envoi",
+    "off": "Jeton enregistré, partage décoché.",
+    "send": "Envoyer ma fiche maintenant",
+    "sending": "Envoi en cours…",
+    "share": "Partager ma fiche avec la guilde",
+    "shareHint": "Envoie votre équipement, vos pets et vos chiffres au site de la guilde. Sans jeton, rien n'est lu ni envoyé.",
+    "title": "Guilde XIII NRV",
+    "token": "Jeton personnel",
+    "tokenPlaceholder": "collez ici le jeton donné par le site",
+    "unavailable": "État indisponible",
+    "waiting": "En attente : entrez en jeu, le meter lira la fiche de votre personnage."
   }
 }

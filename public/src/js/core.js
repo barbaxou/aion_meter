@@ -71,8 +71,9 @@ class DpsApp {
     this._windowHidden = false;
     this.displayMode = "dps";
     this.betaUi = true;
-    this.theme = "aion2";
+    this.theme = "xiiinrv";
     this.availableThemes = [
+      "xiiinrv",
       "aion2",
       "asmodian",
       "cogni",
@@ -2580,6 +2581,7 @@ class DpsApp {
     ];
 
     const themeOptions = [
+      { value: "xiiinrv", label: "XIII NRV" },
       { value: "aion2", label: this.i18n?.t("settings.theme.options.aion2", "AION2") },
       { value: "asmodian", label: this.i18n?.t("settings.theme.options.asmodian", "Asmodian") },
       { value: "cogni", label: this.i18n?.t("settings.theme.options.cogni", "Cogni") },
@@ -4359,7 +4361,7 @@ class DpsApp {
       }
       return this.i18n?.t("target.train", "Training Scarecrow") ?? "Training Scarecrow";
     }
-    return this.i18n?.t("header.title", "A2Tools DPS Meter") ?? "A2Tools DPS Meter";
+    return "XIII NRV METER";
   }
 
   getTargetLabel({ targetId = 0, targetName = "", targetMode = "" } = {}) {

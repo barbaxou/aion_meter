@@ -14,6 +14,8 @@
 
   const invoke = () => window.__TAURI__?.core?.invoke;
   const bridge = () => window.javaBridge;
+  // Les messages d'état suivent la langue choisie, comme le reste du meter.
+  const t = (cle, repli) => window.i18n?.t?.("xiiinrv." + cle, repli) ?? repli;
 
   function elem(id) {
     return document.getElementById(id);
@@ -37,24 +39,24 @@
       const e = await appel("xiiinrv_etat");
       const lignes = [];
       if (!e.jeton_present) {
-        lignes.push("Aucun jeton : le partage est à l'arrêt.");
+        lignes.push(t("idle", "Aucun jeton : le partage est à l'arrêt."));
       } else if (!e.actif) {
-        lignes.push("Jeton enregistré, partage décoché.");
+        lignes.push(t("off", "Jeton enregistré, partage décoché."));
       } else if (!e.personnage) {
-        lignes.push("En attente : entrez en jeu, le meter lira la fiche de votre personnage.");
+        lignes.push(t("waiting", "En attente : entrez en jeu, le meter lira la fiche de votre personnage."));
       } else {
-        lignes.push(`Personnage lu : ${e.personnage}`);
+        lignes.push(`${t("character", "Personnage lu")} : ${e.personnage}`);
         const details = [];
         if (e.combat_power) details.push(`Combat Power ${e.combat_power.toLocaleString("fr-FR")}`);
         if (e.pieces) details.push(`${e.pieces} pièces d'équipement`);
         if (e.pets) details.push(`${e.pets} familles de pets`);
         if (details.length) lignes.push(details.join(" · "));
-        lignes.push(`Dernier envoi : ${depuis(e.dernier_envoi)}`);
+        lignes.push(`${t("lastSend", "Dernier envoi")} : ${depuis(e.dernier_envoi)}`);
       }
       if (e.dernier_message) lignes.push(e.dernier_message);
       zone.textContent = lignes.join("\n");
     } catch (err) {
-      zone.textContent = "État indisponible : " + err;
+      zone.textContent = t("unavailable", "État indisponible") + " : " + err;
     }
   }
 
@@ -86,7 +88,7 @@
       if (!appel) return;
       boutonEnvoi.disabled = true;
       const zone = elem("xiiinrvEtat");
-      if (zone) zone.textContent = "Envoi en cours…";
+      if (zone) zone.textContent = t("sending", "Envoi en cours…");
       try {
         const message = await appel("xiiinrv_envoyer");
         if (zone) zone.textContent = message;

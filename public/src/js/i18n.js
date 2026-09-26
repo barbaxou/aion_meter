@@ -1,5 +1,5 @@
 const createI18n = ({
-  defaultLanguage = "en",
+  defaultLanguage = "fr",
   storageKey = "dpsMeter.language",
   supportedLanguages = [
     "en", "de", "es", "fr", "ja", "ko", "pt", "ru", "zh-Hant", "zh-Hans",

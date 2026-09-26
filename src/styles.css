@@ -74,6 +74,36 @@
   --window-opacity: 0.4;
 }
 
+:root[data-theme="xiiinrv"] {
+  /* Les couleurs du site de la guilde : or, cyan, bleu nuit. */
+  --row-fill: #3a4a7a;
+  --isUser-fill: #d4af37;
+  --dmg-fill-bg: rgba(0, 210, 255, 0.78);
+
+  --warning-fill: #e0a93a;
+  --error-fill: #e0576f;
+
+  --dps: #e8edf7;
+  --dps-text: #e8edf7;
+
+  --panel-border: rgba(212, 175, 55, 0.3);
+  --title: rgba(244, 238, 222, 0.98);
+
+  --text-shadow:
+          0 0 1px rgba(212, 175, 55, 0.45),
+          0 1px 1px rgba(212, 175, 55, 0.3),
+          0 2px 3px rgba(0, 0, 0, 0.5),
+          0 6px 14px rgba(0, 210, 255, 0.18);
+
+  --player-name-shadow:
+          -1px  0   0 rgba(0,0,0,0.95),
+          1px  0   0 rgba(0,0,0,0.95),
+          0   -1px 0 rgba(0,0,0,0.95),
+          0    1px 0 rgba(0,0,0,0.95),
+          0    3px 6px rgba(0,0,0,0.8),
+          0    6px 12px rgba(0,0,0,0.6);
+}
+
 :root[data-theme="aion2"] {
   --row-fill: #5a47b0;
   --isUser-fill: #4fb6ff;
@@ -6693,4 +6723,43 @@ body.windowDragFreeze * {
 html.detailsWindow .meter,
 html.settingsWindow .meter {
   cursor: auto;
+}
+
+/* =====================================================================
+   XIII NRV — section « Guilde » des réglages et mention d'origine
+   ===================================================================== */
+
+.xiiinrvGroup .settingsMiniTitle {
+  color: #d4af37;
+  letter-spacing: 0.12em;
+}
+
+.xiiinrvGroup .settingsGroupBody {
+  border-left: 2px solid rgba(212, 175, 55, 0.45);
+}
+
+/* L'état du partage : plusieurs lignes, lisibles, sans casser la mise en page. */
+.xiiinrvEtat {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1.45;
+  opacity: 0.85;
+}
+
+.xiiinrvEtatRow {
+  display: block;
+  padding-top: 2px;
+}
+
+/* Mention d'origine : le meter est un travail dérivé d'A2Tools, on le dit. */
+.xiiinrvOrigine {
+  width: 100%;
+  margin-top: 6px;
+  font-size: 10px;
+  line-height: 1.5;
+  opacity: 0.55;
+  text-align: center;
 }
