@@ -8,10 +8,12 @@ const REMOTE_APPLIED_SETTING_CONTROLS = {
   "dpsMeter.mainPlayerDpsBold": ".playerDpsBoldCheckbox",
   "dpsMeter.showPing": ".showPingCheckbox",
   "dpsMeter.bossNameSize": ".bossNameSizeInput",
-  // Les deux opacités manquaient : réglées depuis la fenêtre des paramètres,
-  // elles n'atteignaient jamais la fenêtre du meter.
-  "dpsMeter.windowOpacity": ".windowOpacityInput",
-  "dpsMeter.meterOpacity": ".meterOpacityInput",
+  // Les deux opacités ne sont volontairement PAS ici. Les y mettre crée une
+  // boucle : le curseur applique la valeur, l'enregistre, le serveur rediffuse
+  // le changement, la rediffusion repousse le curseur, qui réapplique… Le
+  // curseur se met à bouger tout seul et l'application se fige. Elles sont
+  // appliquées directement par leur propre gestionnaire, dans la fenêtre où on
+  // les règle.
 };
 
 class DpsApp {
@@ -3918,6 +3920,19 @@ class DpsApp {
   // dropdowns (theme, layout, player limit) are not native inputs and need
   // their own handling, so they are deliberately absent.
   applyRemoteSettingChange(key, value) {
+    // Les opacités sont appliquées directement, sans repasser par le curseur ni
+    // par l'enregistrement. Rejouer l'événement du curseur relancerait une
+    // écriture, donc une nouvelle diffusion, donc une nouvelle application : le
+    // curseur se mettait à bouger tout seul et l'application se figeait.
+    if (key === "dpsMeter.windowOpacity") {
+      this.applyWindowOpacity(Number(value), { persist: false });
+      return;
+    }
+    if (key === "dpsMeter.meterFillOpacity") {
+      this.applyMeterFillOpacity(Number(value), { persist: false });
+      return;
+    }
+
     const selector = REMOTE_APPLIED_SETTING_CONTROLS[key];
     if (!selector) return;
     const control = document.querySelector(selector);
