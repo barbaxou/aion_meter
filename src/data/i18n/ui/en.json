@@ -339,7 +339,7 @@
     "character": "Character read",
     "idle": "Sharing off: nothing is read, nothing is sent.",
     "lastSend": "Last send",
-    "noSheet": "Level, Item Level, HP and MP missing: the character sheet is only sent when entering the world. Change zone or log back in with sharing on.",
+    "noSheet": "Level, Item Level, HP and MP missing: open Pets › Genus Insight in game, that is what sends the character sheet.",
     "noToken": "No token: the character is read, but nothing is sent.",
     "send": "Send my character now",
     "sending": "Sending…",

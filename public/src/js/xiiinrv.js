@@ -51,8 +51,8 @@
         if (details.length) lignes.push(details.join(" · "));
         if (!e.niveau) {
           lignes.push(t("noSheet",
-            "Niveau, Item Level, PV et PM manquants : la fiche n'arrive qu'à l'entrée en jeu. "
-            + "Changez de zone ou reconnectez-vous, partage activé."));
+            "Niveau, Item Level, PV et PM manquants : ouvrez Pets › Genus Insight en jeu, "
+            + "c'est ce qui déclenche l'envoi de la fiche."));
         }
         lignes.push(e.jeton_present
           ? `${t("lastSend", "Dernier envoi")} : ${depuis(e.dernier_envoi)}`

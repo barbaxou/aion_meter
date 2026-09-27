@@ -87,9 +87,11 @@ pub fn lecture_ouverte() -> bool {
 
 /// Nom du personnage tel qu'A2Tools le détecte de son côté.
 ///
-/// La fiche `33 36` n'est envoyée qu'à l'entrée en jeu et aux changements de
-/// zone : si le partage est activé après ce moment, on ne la verra pas de toute
-/// la session. A2Tools, lui, retrouve le nom autrement. On s'en sert comme
+/// La fiche `33 36` n'est pas envoyée à l'entrée en jeu : elle arrive quand le
+/// joueur ouvre l'écran Pets › Genus Insight, à la milliseconde près en même
+/// temps que le paquet des pets (constaté sur deux sessions enregistrées).
+/// Tant qu'il ne l'a pas ouvert, on n'a pas son nom. A2Tools, lui, le retrouve
+/// autrement. On s'en sert comme
 /// filet : sans lui, une fiche remontée sans nom ne pourrait pas être reliée au
 /// Roster du site.
 static NOM_DETECTE: OnceLock<Mutex<Option<String>>> = OnceLock::new();
