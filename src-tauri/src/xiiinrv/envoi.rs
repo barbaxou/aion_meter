@@ -63,9 +63,11 @@ pub fn configurer(jeton: Option<String>, url: Option<String>, actif: bool) {
     c.jeton = jeton;
     c.url = url.filter(|u| !u.trim().is_empty());
     c.actif = actif;
-    // La lecture des paquets suit exactement ce réglage : pas de jeton ou case
-    // décochée, et le meter ne regarde plus rien.
-    ouvrir_lecture(c.jeton.is_some() && c.actif);
+    // La lecture des paquets suit la case à cocher : c'est le choix explicite
+    // du membre. Sans jeton, la fiche est lue et affichée dans le meter, mais
+    // rien ne peut partir — l'envoi exige le jeton. Cela permet de vérifier que
+    // la lecture fonctionne avant même d'avoir un jeton.
+    ouvrir_lecture(c.actif);
 }
 
 /// Ce que l'interface affiche dans l'onglet « Guilde XIII NRV ».

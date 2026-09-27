@@ -38,10 +38,8 @@
     try {
       const e = await appel("xiiinrv_etat");
       const lignes = [];
-      if (!e.jeton_present) {
-        lignes.push(t("idle", "Aucun jeton : le partage est à l'arrêt."));
-      } else if (!e.actif) {
-        lignes.push(t("off", "Jeton enregistré, partage décoché."));
+      if (!e.actif) {
+        lignes.push(t("idle", "Partage décoché : rien n'est lu, rien n'est envoyé."));
       } else if (!e.personnage) {
         lignes.push(t("waiting", "En attente : entrez en jeu, le meter lira la fiche de votre personnage."));
       } else {
@@ -51,7 +49,9 @@
         if (e.pieces) details.push(`${e.pieces} pièces d'équipement`);
         if (e.pets) details.push(`${e.pets} familles de pets`);
         if (details.length) lignes.push(details.join(" · "));
-        lignes.push(`${t("lastSend", "Dernier envoi")} : ${depuis(e.dernier_envoi)}`);
+        lignes.push(e.jeton_present
+          ? `${t("lastSend", "Dernier envoi")} : ${depuis(e.dernier_envoi)}`
+          : t("noToken", "Aucun jeton : la fiche est lue, mais rien n'est envoyé."));
       }
       if (e.dernier_message) lignes.push(e.dernier_message);
       zone.textContent = lignes.join("\n");

@@ -75,25 +75,26 @@
 }
 
 :root[data-theme="xiiinrv"] {
-  /* Les couleurs du site de la guilde : or, cyan, bleu nuit. */
-  --row-fill: #3a4a7a;
-  --isUser-fill: #d4af37;
-  --dmg-fill-bg: rgba(0, 210, 255, 0.78);
+  /* Les couleurs du logo : l'aile claire en rose nacré, l'aile sombre en
+     ardoise, et l'or rose de la ferronnerie pour ce qui doit ressortir. */
+  --row-fill: #4a5168;          /* barres des autres : ardoise bleutée */
+  --isUser-fill: #d9a893;       /* ma barre : or rose, comme le logo */
+  --dmg-fill-bg: rgba(240, 214, 214, 0.82);
 
-  --warning-fill: #e0a93a;
-  --error-fill: #e0576f;
+  --warning-fill: #e0b07a;
+  --error-fill: #d97a8c;
 
-  --dps: #e8edf7;
-  --dps-text: #e8edf7;
+  --dps: #f5e6ea;               /* rose nacré de l'aile claire */
+  --dps-text: #f5e6ea;
 
-  --panel-border: rgba(212, 175, 55, 0.3);
-  --title: rgba(244, 238, 222, 0.98);
+  --panel-border: rgba(217, 168, 147, 0.34);
+  --title: #f7ece9;
 
   --text-shadow:
-          0 0 1px rgba(212, 175, 55, 0.45),
-          0 1px 1px rgba(212, 175, 55, 0.3),
-          0 2px 3px rgba(0, 0, 0, 0.5),
-          0 6px 14px rgba(0, 210, 255, 0.18);
+          0 0 1px rgba(217, 168, 147, 0.5),
+          0 1px 1px rgba(217, 168, 147, 0.3),
+          0 2px 3px rgba(0, 0, 0, 0.55),
+          0 6px 14px rgba(46, 52, 64, 0.5);
 
   --player-name-shadow:
           -1px  0   0 rgba(0,0,0,0.95),
@@ -6730,12 +6731,12 @@ html.settingsWindow .meter {
    ===================================================================== */
 
 .xiiinrvGroup .settingsMiniTitle {
-  color: #d4af37;
+  color: #d9a893;
   letter-spacing: 0.12em;
 }
 
 .xiiinrvGroup .settingsGroupBody {
-  border-left: 2px solid rgba(212, 175, 55, 0.45);
+  border-left: 2px solid rgba(217, 168, 147, 0.5);
 }
 
 /* La zone d'état occupe toute la largeur de la section, sinon la grille des
@@ -6748,6 +6749,22 @@ html.settingsWindow .meter {
 
 /* Le champ du jeton garde la hauteur des autres champs du panneau.
    Le sélecteur reprend celui d'A2Tools, sinon le leur reste prioritaire. */
+.settingsPanel .xiiinrvJetonInput {
+  width: 100%;
+  border-radius: 6px;
+  border: 1px solid rgba(217, 168, 147, 0.35);
+  background: rgba(0, 0, 0, 0.35);
+  color: var(--title, #f7ece9);
+  font-size: 11.5px;
+  outline: none;
+}
+.settingsPanel .xiiinrvJetonInput:focus {
+  border-color: rgba(217, 168, 147, 0.8);
+}
+.settingsPanel .xiiinrvJetonInput::placeholder {
+  color: rgba(247, 236, 233, 0.35);
+}
+
 .settingsPanel .settingsRowStacked .xiiinrvJetonInput {
   /* Leur règle donne à ce champ une base de 60 px : dans une colonne flex,
      c'est la hauteur. On la ramène à celle des autres champs. */

@@ -1,6 +1,6 @@
 {
   "header": {
-    "title": "A2Tools DPS Meter",
+    "title": "XIII NRV Meter",
     "display": {
       "dps": "DPS",
       "total": "DGT",
@@ -243,7 +243,8 @@
       "reload": "Recharger les données",
       "toggle": "Afficher/masquer la fenêtre",
       "pressKeys": "Appuyez sur des touches...",
-      "needModifiers": "2 modificateurs minimum"
+      "needModifiers": "2 modificateurs minimum",
+      "unset": "Appuyez pour configurer"
     },
     "defaultMeterMode": {
       "label": "Mode par défaut"
@@ -256,20 +257,7 @@
       }
     },
     "showSupporterColors": "Afficher les couleurs des soutiens",
-    "showSupporterColorsHint": "Le nom des soutiens s'affiche en doré. Purement esthétique — aucun chiffre n'est modifié.",
-    "account": {
-      "title": "Compte A2 Tools",
-      "signedOut": "Non connecté",
-      "signedIn": "Connecté en tant que {name}",
-      "hint": "Connectez-vous pour synchroniser vos personnages et paramètres avec a2tools.app.",
-      "connect": "Se connecter",
-      "signOut": "Se déconnecter",
-      "codePrompt": "Validez ce code dans votre navigateur :",
-      "codeHint": "La page devrait déjà être ouverte. Le code expire dans 10 minutes.",
-      "working": "En attente de validation…",
-      "failed": "Échec de la connexion : {error}",
-      "supporter": "Soutien"
-    }
+    "showSupporterColorsHint": "Le nom des soutiens s'affiche en doré. Purement esthétique — aucun chiffre n'est modifié."
   },
   "support": {
     "button": "Me soutenir",
@@ -349,9 +337,9 @@
   },
   "xiiinrv": {
     "character": "Personnage lu",
-    "idle": "Aucun jeton : le partage est à l'arrêt.",
+    "idle": "Partage décoché : rien n'est lu, rien n'est envoyé.",
     "lastSend": "Dernier envoi",
-    "off": "Jeton enregistré, partage décoché.",
+    "noToken": "Aucun jeton : la fiche est lue, mais rien n'est envoyé.",
     "send": "Envoyer ma fiche maintenant",
     "sending": "Envoi en cours…",
     "share": "Partager ma fiche avec la guilde",

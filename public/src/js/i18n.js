@@ -2,7 +2,7 @@ const createI18n = ({
   defaultLanguage = "fr",
   storageKey = "dpsMeter.language",
   supportedLanguages = [
-    "en", "de", "es", "fr", "ja", "ko", "pt", "ru", "zh-Hant", "zh-Hans",
+    "fr", "en",
   ],
 } = {}) => {
   let currentLanguage = defaultLanguage;

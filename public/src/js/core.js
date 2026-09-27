@@ -2567,17 +2567,10 @@ class DpsApp {
       this._settingsDropdownOutsideBound = true;
     }
 
+    // Guilde française : deux langues suffisent.
     const languageOptions = [
-      { value: "en", label: "English" },
-      { value: "de", label: "Deutsch" },
-      { value: "es", label: "Español" },
       { value: "fr", label: "Français" },
-      { value: "ja", label: "日本語" },
-      { value: "ko", label: "한국어" },
-      { value: "pt", label: "Português" },
-      { value: "ru", label: "Русский" },
-      { value: "zh-Hant", label: "繁體中文" },
-      { value: "zh-Hans", label: "简体中文" },
+      { value: "en", label: "English" },
     ];
 
     const themeOptions = [
@@ -3196,10 +3189,12 @@ class DpsApp {
       const reloadLabel = window.javaBridge?.getCurrentHotKey?.() || "";
       const toggleLabel = window.javaBridge?.getCurrentToggleWindowHotKey?.() || "";
       if (reloadBtn) {
-        reloadBtn.querySelector(".keybindText").textContent = reloadLabel || "Ctrl+Alt+R";
+        reloadBtn.querySelector(".keybindText").textContent =
+          reloadLabel || this.i18n?.t("settings.keybind.unset", "Appuyez pour configurer") || "Appuyez pour configurer";
       }
       if (toggleBtn) {
-        toggleBtn.querySelector(".keybindText").textContent = toggleLabel || "Ctrl+Alt+Up";
+        toggleBtn.querySelector(".keybindText").textContent =
+          toggleLabel || this.i18n?.t("settings.keybind.unset", "Appuyez pour configurer") || "Appuyez pour configurer";
       }
     };
     this.refreshKeybindLabels();

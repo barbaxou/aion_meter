@@ -27,12 +27,16 @@ enchantement. Un objet équipé se reconnaît à sa seule forme dans le trafic �
 de 9 chiffres commençant par 1, 2, 3 ou 8, conteneur `0x0B`, puis l'emplacement. Vérifié
 sur deux sessions réelles : 27 objets sur 27, aucun faux positif.
 
-**Sans jeton, ce module ne lit rien et n'envoie rien.** Un interrupteur, fermé par
-défaut, n'est ouvert que si un jeton est enregistré **et** que la case « Partager ma
-fiche » est cochée. Tant qu'il est fermé, `observer()` ressort à la première ligne :
-aucun paquet n'est analysé, rien n'est gardé en mémoire. Si on décoche la case, ce qui
-avait été lu est effacé. Le meter se comporte alors exactement comme la version
-d'origine.
+**Rien n'est lu tant que la case « Partager ma fiche » n'est pas cochée.** Un
+interrupteur, fermé par défaut, commande la lecture : tant qu'il l'est, `observer()`
+ressort à sa première ligne, aucun paquet n'est analysé, rien n'est gardé en mémoire.
+Décocher la case efface ce qui avait été lu. Le meter se comporte alors exactement comme
+la version d'origine.
+
+**Et rien ne part sans jeton.** La case commande la lecture, le jeton commande l'envoi.
+Case cochée sans jeton : la fiche est lue et affichée dans le meter, mais aucun envoi
+n'est possible. C'est ce qui permet de vérifier que la lecture fonctionne avant même
+d'avoir un jeton.
 
 ## Ce qui a été modifié
 
