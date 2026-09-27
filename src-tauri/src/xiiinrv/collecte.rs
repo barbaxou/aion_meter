@@ -143,20 +143,25 @@ fn entete(packet: &[u8]) -> Option<([u8; 2], usize)> {
 // Point d'entrée : un paquet, déjà découpé par A2Tools
 // ---------------------------------------------------------------------------
 
-/// Ce morceau de trafic contient-il l'un de nos quatre paquets ?
+/// Faut-il laisser passer ce trafic avant que le port de combat ne soit
+/// verrouillé ?
 ///
-/// Sert avant que le port de combat ne soit verrouillé : à ce moment-là,
-/// A2Tools écarte tout ce qui ne ressemble pas à du combat — or la fiche de
-/// personnage (`33 36`) arrive justement à ce moment, à l'entrée en jeu.
-/// Sans ce test, elle était jetée avant d'arriver jusqu'à nous.
-pub fn interesse(donnees: &[u8]) -> bool {
-    if !lecture_ouverte() {
-        return false;
-    }
-    const CIBLES: [[u8; 2]; 4] = [[0x33, 0x36], [0x11, 0x56], [0x56, 0x36], [0x00, 0x90]];
-    donnees
-        .windows(2)
-        .any(|f| CIBLES.iter().any(|c| f[0] == c[0] && f[1] == c[1]))
+/// Tant que le port n'est pas verrouillé, A2Tools écarte tout ce qui ne
+/// ressemble pas à du combat. Or la fiche de personnage, l'inventaire et le
+/// Combat Power arrivent précisément à ce moment, à l'entrée en jeu.
+///
+/// On a d'abord essayé de ne laisser passer que les morceaux contenant l'un de
+/// nos opcodes. Ça ne suffit pas : un paquet de plusieurs kilo-octets est
+/// découpé par le réseau, et seul le premier morceau porte l'opcode. Les autres
+/// étaient jetés, donc le paquet ne pouvait plus être reconstitué — le Combat
+/// Power et l'inventaire apparaissaient dans le journal sans jamais être
+/// décodables.
+///
+/// Quand le partage est activé, on laisse donc passer tout le trafic pendant
+/// ces quelques secondes. Le partage éteint, cette fonction répond non dès sa
+/// première ligne et rien ne change pour A2Tools.
+pub fn interesse(_donnees: &[u8]) -> bool {
+    lecture_ouverte()
 }
 
 pub fn observer(packet: &[u8]) {
