@@ -200,6 +200,55 @@ fn lit_la_fiche_complete_depuis_un_enregistrement_reel() {
     assert_eq!((base.rarete, base.stat, base.valeur), (4, 255, 35));
 }
 
+/// Session du 27/09/2026 : le joueur entre en jeu **sans ouvrir l'écran des
+/// pets**. La fiche de personnage y est imbriquée dans un paquet `60 88` au lieu
+/// d'arriver seule — c'est ce cas qui échappait à la lecture.
+#[test]
+fn lit_la_fiche_imbriquee_sans_ouvrir_les_pets() {
+    let _garde = VERROU.lock().unwrap_or_else(|e| e.into_inner());
+    let journal = std::path::Path::new(&std::env::var("APPDATA").unwrap_or_default())
+        .join("gg.xiiinrv.meter")
+        .join("packets_20260927_111258.txt");
+    let Ok(contenu) = std::fs::read_to_string(&journal) else {
+        eprintln!("enregistrement absent, test ignoré : {}", journal.display());
+        return;
+    };
+
+    collecte::vider();
+    collecte::ouvrir_lecture(true);
+
+    let mut flux: std::collections::HashMap<String, Vec<u8>> = std::collections::HashMap::new();
+    for ligne in contenu.lines() {
+        let champs: Vec<&str> = ligne.trim_end().split('|').collect();
+        if champs.len() != 3 || champs[1] == "STREAMKEY" {
+            continue;
+        }
+        if let Some(octets) = hex_vers_octets(champs[2].trim()) {
+            flux.entry(champs[1].to_string()).or_default().extend(octets);
+        }
+    }
+    for tampon in flux.values() {
+        parcourir(tampon, &mut |p| collecte::observer(p));
+    }
+
+    let e = collecte::lire_etat();
+    println!(
+        "fiche imbriquée : nom={:?} niveau={:?} itemLevel={:?} cp={:?} pièces={}",
+        e.nom,
+        e.niveau,
+        e.item_level,
+        e.combat_power,
+        e.equipement.len()
+    );
+    assert_eq!(e.nom.as_deref(), Some("Barbaxx"), "nom");
+    assert_eq!(e.niveau, Some(45), "niveau");
+    assert_eq!(e.item_level, Some(3009), "Item Level");
+    // Le compteur défile à l'entrée en jeu : on doit garder la valeur finale,
+    // pas une étape du défilement.
+    assert_eq!(e.combat_power, Some(132462), "Combat Power");
+    assert!(e.equipement.len() >= 20, "équipement lu");
+}
+
 #[test]
 fn ne_lit_rien_sans_jeton() {
     let _garde = VERROU.lock().unwrap_or_else(|e| e.into_inner());

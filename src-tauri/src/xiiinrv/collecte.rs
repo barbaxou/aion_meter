@@ -51,6 +51,9 @@ pub struct Etat {
     pub pv: Option<u32>,
     pub pm: Option<u32>,
     pub combat_power: Option<u32>,
+    /// Quand la dernière valeur de Combat Power est arrivée : sert à distinguer
+    /// le défilement de l'entrée en jeu d'un vrai changement.
+    pub cp_vu_le: Option<std::time::Instant>,
     pub equipement: Vec<Piece>,
     pub pets: Vec<Genus>,
 }
@@ -224,6 +227,20 @@ pub fn observer(packet: &[u8]) {
     let Some((opcode, _apres)) = entete(packet) else {
         return;
     };
+    // La fiche de personnage n'arrive pas toujours seule : à l'entrée en jeu
+    // elle est imbriquée dans un plus gros paquet (`60 88`), et notre lecture,
+    // qui ne regardait que l'opcode extérieur, passait à côté. On la cherche
+    // donc dans tout paquet qui porte la marque `33 36`, tant qu'on n'a pas
+    // encore de niveau.
+    if opcode != [0x33, 0x36] && etat().lock().niveau.is_none() {
+        let porte_la_marque = packet
+            .windows(2)
+            .any(|f| f[0] == 0x33 && f[1] == 0x36);
+        if porte_la_marque {
+            lire_fiche(packet);
+        }
+    }
+
     match opcode {
         [0x33, 0x36] => lire_fiche(packet),
         [0x11, 0x56] => lire_equipement(packet),
@@ -256,16 +273,22 @@ fn lire_fiche(packet: &[u8]) {
             continue;
         }
         // Après le nom : serveur (u16), classe (u32), un octet, niveau, Item Level.
+        // L'Item Level tient sur deux octets : lus sur quatre, la version
+        // imbriquée ramenait une valeur aberrante et la fiche était rejetée.
         let (Some(serveur), Some(niveau), Some(item_level)) = (
             u16_le(packet, fin),
             u32_le(packet, fin + 7),
-            u32_le(packet, fin + 11),
+            u16_le(packet, fin + 11),
         ) else {
             continue;
         };
-        if !(1..=200).contains(&niveau) || !(1..=100_000).contains(&item_level) {
+        if !(1..=200).contains(&niveau)
+            || !(100..=60_000).contains(&item_level)
+            || !(1..=9999).contains(&serveur)
+        {
             continue;
         }
+        let item_level = item_level as u32;
         if let Ok(nom) = std::str::from_utf8(&packet[debut..fin]) {
             trouve = Some((nom.to_string(), serveur, niveau, item_level));
             break;
@@ -380,7 +403,12 @@ fn lire_equipement(packet: &[u8]) {
 // ---------------------------------------------------------------------------
 
 /// Trois petits paquets de 19 octets font défiler le compteur à l'entrée en jeu
-/// (77 148 → 111 394 → 132 462) : on garde simplement la dernière valeur reçue.
+/// (77 148 → 111 394 → 132 462). Garder « la dernière valeur reçue » donnait un
+/// Combat Power faux quand on n'attrapait qu'une étape de ce défilement.
+///
+/// Règle retenue : deux valeurs séparées de moins de cinq secondes font partie
+/// du même défilement, on garde la plus grande. Au-delà, c'est un vrai
+/// changement (équipement, niveau) et la nouvelle valeur remplace l'ancienne.
 fn lire_combat_power(packet: &[u8]) {
     if packet.len() != 19 {
         return;
@@ -388,9 +416,21 @@ fn lire_combat_power(packet: &[u8]) {
     let Some(valeur) = u32_le(packet, 3) else {
         return;
     };
-    if (1_000..100_000_000).contains(&valeur) {
-        etat().lock().combat_power = Some(valeur);
+    if !(1_000..100_000_000).contains(&valeur) {
+        return;
     }
+
+    let maintenant = std::time::Instant::now();
+    let mut e = etat().lock();
+    let meme_defilement = e
+        .cp_vu_le
+        .map(|t| maintenant.duration_since(t).as_secs() < 5)
+        .unwrap_or(false);
+    e.combat_power = Some(match (e.combat_power, meme_defilement) {
+        (Some(ancien), true) => ancien.max(valeur),
+        _ => valeur,
+    });
+    e.cp_vu_le = Some(maintenant);
 }
 
 // ---------------------------------------------------------------------------
