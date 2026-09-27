@@ -8,6 +8,10 @@ const REMOTE_APPLIED_SETTING_CONTROLS = {
   "dpsMeter.mainPlayerDpsBold": ".playerDpsBoldCheckbox",
   "dpsMeter.showPing": ".showPingCheckbox",
   "dpsMeter.bossNameSize": ".bossNameSizeInput",
+  // Les deux opacités manquaient : réglées depuis la fenêtre des paramètres,
+  // elles n'atteignaient jamais la fenêtre du meter.
+  "dpsMeter.windowOpacity": ".windowOpacityInput",
+  "dpsMeter.meterOpacity": ".meterOpacityInput",
 };
 
 class DpsApp {
@@ -2573,18 +2577,9 @@ class DpsApp {
       { value: "en", label: "English" },
     ];
 
-    const themeOptions = [
-      { value: "xiiinrv", label: "XIII NRV" },
-      { value: "asmodian", label: this.i18n?.t("settings.theme.options.asmodian", "Asmodian") },
-      { value: "cogni", label: this.i18n?.t("settings.theme.options.cogni", "Cogni") },
-      { value: "elyos", label: this.i18n?.t("settings.theme.options.elyos", "Elyos") },
-      { value: "ember", label: this.i18n?.t("settings.theme.options.ember", "Ember") },
-      { value: "fera", label: this.i18n?.t("settings.theme.options.fera", "Fera") },
-      { value: "frost", label: this.i18n?.t("settings.theme.options.frost", "Frost") },
-      { value: "natura", label: this.i18n?.t("settings.theme.options.natura", "Natura") },
-      { value: "obsidian", label: this.i18n?.t("settings.theme.options.obsidian", "Obsidian") },
-      { value: "varian", label: this.i18n?.t("settings.theme.options.varian", "Varian") },
-    ];
+    // Un seul thème : celui de la guilde. Les autres restent dans la feuille
+    // de style, mais ne sont plus proposés.
+    const themeOptions = [{ value: "xiiinrv", label: "XIII NRV" }];
 
     themeOptions.sort((a, b) => a.label.localeCompare(b.label));
 

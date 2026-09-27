@@ -190,7 +190,13 @@ impl CaptureDispatcher {
                 if looks_like_tls(&cap.data) {
                     continue;
                 }
-                if !contains_any(&cap.data, &COMBAT_SIGNATURES) {
+                // Ajout XIII NRV : tant que le port n'est pas verrouillé, seuls
+                // les paquets de combat passent. La fiche de personnage arrive
+                // justement avant ce verrouillage : on la laisse passer aussi,
+                // et seulement quand le partage est activé.
+                if !contains_any(&cap.data, &COMBAT_SIGNATURES)
+                    && !crate::xiiinrv::interesse(&cap.data)
+                {
                     continue;
                 }
             }

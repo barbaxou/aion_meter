@@ -302,6 +302,13 @@ const createMeterUI = ({
         }
         const src = classIconSrcByJob.get(row.job);
         if (view.lastClassIconSrc !== src) {
+          // Les images sont recopiées à la racine dans l'application installée,
+          // mais restent sous src/ pendant le développement : si la première
+          // adresse échoue, on essaie l'autre une fois.
+          view.classIconImg.onerror = () => {
+            view.classIconImg.onerror = null;
+            view.classIconImg.src = `./src/assets/${row.job}.png`;
+          };
           view.classIconImg.src = src;
           view.lastClassIconSrc = src;
         }
