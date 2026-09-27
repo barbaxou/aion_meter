@@ -76,6 +76,9 @@ pub struct EtatPartage {
     pub actif: bool,
     pub jeton_present: bool,
     pub personnage: Option<String>,
+    /// Absent tant que la fiche `33 36` n'a pas été vue : l'interface s'en sert
+    /// pour expliquer ce qui manque et comment l'obtenir.
+    pub niveau: Option<u32>,
     pub pieces: usize,
     pub pets: usize,
     pub combat_power: Option<u32>,
@@ -91,6 +94,7 @@ pub fn etat_partage() -> EtatPartage {
         actif: c.actif,
         jeton_present: c.jeton.is_some(),
         personnage: e.nom.clone(),
+        niveau: e.niveau,
         pieces: e.equipement.len(),
         pets: e.pets.len(),
         combat_power: e.combat_power,

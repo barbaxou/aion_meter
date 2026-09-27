@@ -85,6 +85,24 @@ pub fn lecture_ouverte() -> bool {
     LECTURE_OUVERTE.load(Ordering::Relaxed)
 }
 
+/// Nom du personnage tel qu'A2Tools le détecte de son côté.
+///
+/// La fiche `33 36` n'est envoyée qu'à l'entrée en jeu et aux changements de
+/// zone : si le partage est activé après ce moment, on ne la verra pas de toute
+/// la session. A2Tools, lui, retrouve le nom autrement. On s'en sert comme
+/// filet : sans lui, une fiche remontée sans nom ne pourrait pas être reliée au
+/// Roster du site.
+static NOM_DETECTE: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+
+fn nom_detecte_stock() -> &'static Mutex<Option<String>> {
+    NOM_DETECTE.get_or_init(|| Mutex::new(None))
+}
+
+pub fn nom_detecte(nom: Option<String>) {
+    let nom = nom.map(|n| n.trim().to_string()).filter(|n| !n.is_empty());
+    *nom_detecte_stock().lock() = nom;
+}
+
 static ETAT: OnceLock<Mutex<Etat>> = OnceLock::new();
 
 fn etat() -> &'static Mutex<Etat> {
@@ -92,7 +110,11 @@ fn etat() -> &'static Mutex<Etat> {
 }
 
 pub fn lire_etat() -> Etat {
-    etat().lock().clone()
+    let mut e = etat().lock().clone();
+    if e.nom.is_none() {
+        e.nom = nom_detecte_stock().lock().clone();
+    }
+    e
 }
 
 pub fn vider() {

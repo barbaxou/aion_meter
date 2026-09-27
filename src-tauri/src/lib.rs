@@ -1506,6 +1506,20 @@ pub fn run() {
             );
             crate::xiiinrv::demarrer();
 
+            // Le nom détecté par A2Tools sert de filet quand la fiche de
+            // personnage n'a pas été vue (elle n'arrive qu'à l'entrée en jeu).
+            let nom_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+                    if let Some(etat) = nom_handle.try_state::<AppState>() {
+                        crate::xiiinrv::collecte::nom_detecte(
+                            etat.data_storage.local_character_name(),
+                        );
+                    }
+                }
+            });
+
             app.manage(state);
 
             // Reopen the Details window if it was left enabled. Done here rather

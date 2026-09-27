@@ -49,6 +49,11 @@
         if (e.pieces) details.push(`${e.pieces} pièces d'équipement`);
         if (e.pets) details.push(`${e.pets} familles de pets`);
         if (details.length) lignes.push(details.join(" · "));
+        if (!e.niveau) {
+          lignes.push(t("noSheet",
+            "Niveau, Item Level, PV et PM manquants : la fiche n'arrive qu'à l'entrée en jeu. "
+            + "Changez de zone ou reconnectez-vous, partage activé."));
+        }
         lignes.push(e.jeton_present
           ? `${t("lastSend", "Dernier envoi")} : ${depuis(e.dernier_envoi)}`
           : t("noToken", "Aucun jeton : la fiche est lue, mais rien n'est envoyé."));
