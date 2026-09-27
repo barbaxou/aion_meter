@@ -3,29 +3,6 @@
 version = 4
 
 [[package]]
-name = "a2tools-dps-meter"
-version = "2.0.26"
-dependencies = [
- "chrono",
- "futures-util",
- "libloading 0.8.9",
- "lz4_flex",
- "parking_lot",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-opener",
- "tauri-plugin-process",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "urlencoding",
- "windows 0.59.0",
-]
-
-[[package]]
 name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5755,6 +5732,29 @@ dependencies = [
  "libc",
  "once_cell",
  "pkg-config",
+]
+
+[[package]]
+name = "xiiinrv-meter"
+version = "2.0.26"
+dependencies = [
+ "chrono",
+ "futures-util",
+ "libloading 0.8.9",
+ "lz4_flex",
+ "parking_lot",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-opener",
+ "tauri-plugin-process",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "urlencoding",
+ "windows 0.59.0",
 ]
 
 [[package]]

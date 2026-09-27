@@ -7,7 +7,6 @@ const REMOTE_APPLIED_SETTING_CONTROLS = {
   "dpsMeter.mainPlayerNamesBold": ".playerNamesBoldCheckbox",
   "dpsMeter.mainPlayerDpsBold": ".playerDpsBoldCheckbox",
   "dpsMeter.showPing": ".showPingCheckbox",
-  "dpsMeter.bossNameSize": ".bossNameSizeInput",
   // Les deux opacités ne sont volontairement PAS ici. Les y mettre crée une
   // boucle : le curseur applique la valeur, l'enregistre, le serveur rediffuse
   // le changement, la rediffusion repousse le curseur, qui réapplique… Le
@@ -3930,6 +3929,12 @@ class DpsApp {
     }
     if (key === "dpsMeter.meterFillOpacity") {
       this.applyMeterFillOpacity(Number(value), { persist: false });
+      return;
+    }
+    // Même cas : ce curseur était rejoué comme une case à cocher, avec la
+    // même boucle à la clé.
+    if (key === "dpsMeter.bossNameSize") {
+      this.applyBossNameSize(Number(value), { persist: false });
       return;
     }
 

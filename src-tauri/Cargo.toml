@@ -1,12 +1,12 @@
 [package]
-name = "a2tools-dps-meter"
+name = "xiiinrv-meter"
 version = "2.0.26"
-description = "A2Tools DPS Meter - AION 2 real-time DPS overlay"
+description = "XIII NRV Meter - meter de guilde pour AION 2"
 authors = ["taengu"]
 edition = "2024"
 
 [lib]
-name = "a2tools_dps_meter_lib"
+name = "xiiinrv_meter_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

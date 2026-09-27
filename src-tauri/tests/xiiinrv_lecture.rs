@@ -10,7 +10,7 @@
 //! Barbaxx, niveau 45, Item Level 3009, Combat Power 132 462, PV 25 835,
 //! PM 5 678, 27 pièces d'équipement, 5 familles de pets et 35 effets.
 
-use a2tools_dps_meter_lib::xiiinrv::collecte;
+use xiiinrv_meter_lib::xiiinrv::collecte;
 
 /// Les deux tests partagent le même interrupteur de lecture et le même état :
 /// ils ne peuvent pas tourner en même temps, sinon l'un ferme ce que l'autre
