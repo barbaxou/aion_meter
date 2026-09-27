@@ -12,6 +12,11 @@
 
 use a2tools_dps_meter_lib::xiiinrv::collecte;
 
+/// Les deux tests partagent le même interrupteur de lecture et le même état :
+/// ils ne peuvent pas tourner en même temps, sinon l'un ferme ce que l'autre
+/// vient d'ouvrir. Ce verrou les fait passer l'un après l'autre.
+static VERROU: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 const JOURNAL: &str =
     r"D:\9 - meters aion\kuroukihime\Aion2DpsMeter-v1.10.3.302-win-x64\PacketLogs\packets_20260920_090846.txt";
 
@@ -102,6 +107,7 @@ fn parcourir_a(flux: &[u8], voir: &mut impl FnMut(&[u8]), profondeur: u32) {
 
 #[test]
 fn lit_la_fiche_complete_depuis_un_enregistrement_reel() {
+    let _garde = VERROU.lock().unwrap_or_else(|e| e.into_inner());
     let Ok(contenu) = std::fs::read_to_string(JOURNAL) else {
         eprintln!("enregistrement absent, test ignoré : {}", JOURNAL);
         return;
@@ -196,6 +202,7 @@ fn lit_la_fiche_complete_depuis_un_enregistrement_reel() {
 
 #[test]
 fn ne_lit_rien_sans_jeton() {
+    let _garde = VERROU.lock().unwrap_or_else(|e| e.into_inner());
     let Ok(contenu) = std::fs::read_to_string(JOURNAL) else {
         eprintln!("enregistrement absent, test ignoré");
         return;
