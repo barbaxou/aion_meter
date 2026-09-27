@@ -74,8 +74,10 @@ static LECTURE_OUVERTE: AtomicBool = AtomicBool::new(false);
 pub fn ouvrir_lecture(ouverte: bool) {
     let avant = LECTURE_OUVERTE.swap(ouverte, Ordering::Relaxed);
     if avant && !ouverte {
-        // On vient de refermer : on n'a aucune raison de garder la fiche.
+        // On vient de refermer : on n'a aucune raison de garder la fiche,
+        // ni de continuer à laisser passer un flux.
         vider();
+        flux_retenus().lock().clear();
     }
 }
 
@@ -150,18 +152,43 @@ fn entete(packet: &[u8]) -> Option<([u8; 2], usize)> {
 /// ressemble pas à du combat. Or la fiche de personnage, l'inventaire et le
 /// Combat Power arrivent précisément à ce moment, à l'entrée en jeu.
 ///
-/// On a d'abord essayé de ne laisser passer que les morceaux contenant l'un de
-/// nos opcodes. Ça ne suffit pas : un paquet de plusieurs kilo-octets est
-/// découpé par le réseau, et seul le premier morceau porte l'opcode. Les autres
-/// étaient jetés, donc le paquet ne pouvait plus être reconstitué — le Combat
-/// Power et l'inventaire apparaissaient dans le journal sans jamais être
-/// décodables.
+/// Deux essais avant celui-ci :
+///   1. ne laisser passer que les morceaux contenant l'un de nos opcodes —
+///      insuffisant : un paquet de plusieurs kilo-octets est découpé par le
+///      réseau et seul le premier morceau porte l'opcode, les suivants étaient
+///      jetés et le paquet ne pouvait plus être reconstitué ;
+///   2. tout laisser passer — trop large : le meter ne reconnaissait plus le
+///      flux du jeu et ne détectait plus les combats.
 ///
-/// Quand le partage est activé, on laisse donc passer tout le trafic pendant
-/// ces quelques secondes. Le partage éteint, cette fonction répond non dès sa
-/// première ligne et rien ne change pour A2Tools.
-pub fn interesse(_donnees: &[u8]) -> bool {
-    lecture_ouverte()
+/// D'où cette version : dès qu'un de nos paquets est vu sur un flux, **ce
+/// flux-là** est retenu et passe entièrement. Les autres flux restent filtrés
+/// comme avant, donc la détection du combat n'est pas touchée.
+pub fn interesse(port_a: u16, port_b: u16, donnees: &[u8]) -> bool {
+    if !lecture_ouverte() {
+        return false;
+    }
+    let cle = (port_a.min(port_b), port_a.max(port_b));
+    if flux_retenus().lock().contains(&cle) {
+        return true;
+    }
+
+    const CIBLES: [[u8; 2]; 4] = [[0x33, 0x36], [0x11, 0x56], [0x56, 0x36], [0x00, 0x90]];
+    let vu = donnees
+        .windows(2)
+        .any(|f| CIBLES.iter().any(|c| f[0] == c[0] && f[1] == c[1]));
+    if vu {
+        let mut liste = flux_retenus().lock();
+        if !liste.contains(&cle) {
+            liste.push(cle);
+        }
+    }
+    vu
+}
+
+static FLUX_RETENUS: OnceLock<Mutex<Vec<(u16, u16)>>> = OnceLock::new();
+
+fn flux_retenus() -> &'static Mutex<Vec<(u16, u16)>> {
+    FLUX_RETENUS.get_or_init(|| Mutex::new(Vec::new()))
 }
 
 pub fn observer(packet: &[u8]) {

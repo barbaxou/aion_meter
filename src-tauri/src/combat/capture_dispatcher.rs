@@ -195,7 +195,7 @@ impl CaptureDispatcher {
                 // justement avant ce verrouillage : on la laisse passer aussi,
                 // et seulement quand le partage est activé.
                 if !contains_any(&cap.data, &COMBAT_SIGNATURES)
-                    && !crate::xiiinrv::interesse(&cap.data)
+                    && !crate::xiiinrv::interesse(cap.src_port, cap.dst_port, &cap.data)
                 {
                     continue;
                 }
