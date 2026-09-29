@@ -255,10 +255,16 @@ impl CaptureDispatcher {
                 unlocked && sig_hits.get(&key).map(|(c, _)| *c).unwrap_or(0) >= SIGNATURE_LOCK_THRESHOLD;
             if signature_locked && self.port_detector.current_port().is_none() {
                 self.port_detector.confirm_candidate(cap.src_port, cap.dst_port, cap.device_name.as_deref());
-                // Ajout XIII NRV : c'est maintenant qu'on connaît le flux du jeu. On
-                // lit ce qu'on avait gardé de côté — l'inventaire et le Combat
-                // Power de l'entrée en jeu y sont — puis on suit ce flux.
-                crate::xiiinrv::verrouille(cap.src_port, cap.dst_port);
+                // Ajout XIII NRV : on lit ce qu'on avait gardé de côté — l'inventaire
+                // et le Combat Power de l'entrée en jeu y sont — puis on suit ce
+                // flux. Mais seulement s'il a **vraiment** été verrouillé :
+                // `confirm_candidate` est aussi appelé pour des candidats qui ne le
+                // deviennent pas. Le 29/09 trois flux ont été déclarés coup sur
+                // coup (10216, 18237, puis 61944) ; chacun écrasait le précédent et
+                // seul l'ordre d'arrivée a fait qu'on a suivi le bon.
+                if self.port_detector.current_port() == Some(cap.src_port) {
+                    crate::xiiinrv::verrouille(cap.src_port, cap.dst_port);
+                }
                 // On lock, GC the orphaned candidate assemblers (the relay's
                 // duplicate external flows) so only the locked flow is processed.
                 if self.port_detector.current_port().is_some() {
