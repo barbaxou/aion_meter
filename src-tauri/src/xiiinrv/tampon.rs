@@ -96,16 +96,30 @@ pub fn relire(origine: u16, destination: u16) {
     if !lecture_ouverte() {
         return;
     }
+    // Le tampon commence presque toujours au milieu d'un paquet : ses premiers
+    // octets sont la fin du précédent. Sans ce recalage, le découpeur se
+    // resynchronise octet par octet et peut fabriquer un paquet qui n'existe
+    // pas — c'est ainsi qu'un Combat Power de 77 148 est remonté au site le
+    // 29/09 alors que le jeu en affichait 132 462.
+    let Some(debut) = debut_aligne(&octets) else {
+        info!(
+            "XIII NRV : flux {:?} verrouillé, {} octets gardés mais aucun début              de paquet reconnaissable : rien n'est relu",
+            cle,
+            octets.len()
+        );
+        return;
+    };
     let mut paquets = 0usize;
-    parcourir(&octets, &mut |paquet| {
+    parcourir(&octets[debut..], &mut |paquet| {
         paquets += 1;
         observer(paquet);
     });
     info!(
-        "XIII NRV : flux {:?} verrouillé, {} octets gardés relus en {} paquets",
+        "XIII NRV : flux {:?} verrouillé, {} octets gardés relus en {} paquets          (début aligné à {})",
         cle,
         octets.len(),
-        paquets
+        paquets,
+        debut
     );
 }
 
@@ -134,6 +148,102 @@ fn varint(d: &[u8], o: usize) -> Option<(usize, usize)> {
             return None;
         }
     }
+}
+
+/// Le premier endroit du tampon où commence vraiment un paquet.
+///
+/// Un tampon commence là où le meter a commencé à écouter, donc presque toujours
+/// au milieu d'un paquet : ses premiers octets sont la fin du précédent. Parti de
+/// là, le découpage se décale, et un décalage ne se rattrape pas toujours : une
+/// longueur lue de travers fait sauter par-dessus un groupe compressé entier, et
+/// tout son contenu est perdu. C'est ce qui est arrivé le 29/09/2026 — le
+/// Combat Power défile en trois paquets et le site n'a reçu que le premier.
+///
+/// Ce qu'on prend comme preuve d'un bon départ : **une décompression qui
+/// réussit**. Le flux du jeu est fait pour l'essentiel de groupes compressés, et
+/// un découpage décalé ne produit presque jamais un bloc valide de la taille
+/// annoncée — alors qu'un découpage juste les enchaîne tous. Compter les octets
+/// « expliqués » ne suffisait pas : plusieurs départs y arrivent aussi bien, et
+/// on retenait le mauvais.
+///
+/// Renvoie `None` si aucune position ne convainc : mieux vaut ne rien relire que
+/// relire de travers.
+const FENETRE_DE_CONTROLE: usize = 64 * 1024;
+const CANDIDATS_AU_PLUS: usize = 4096;
+const GROUPES_POUR_ETRE_SUR: usize = 4;
+const MINIMUM_CREDIBLE: usize = 32;
+
+/// Ce qu'un départ explique : combien de groupes compressés s'y décompressent, et
+/// combien d'octets s'enchaînent sans le moindre rattrapage.
+fn qualite(flux: &[u8], debut: usize) -> (usize, usize) {
+    let limite = (debut + FENETRE_DE_CONTROLE).min(flux.len());
+    let mut o = debut;
+    let mut groupes = 0usize;
+    while o < limite {
+        // Comme le découpeur : un octet nul est du remplissage, on passe.
+        if flux[o] == 0 {
+            o += 1;
+            continue;
+        }
+        let Some((valeur, lus)) = varint(flux, o) else {
+            break;
+        };
+        if valeur <= 3 {
+            break;
+        }
+        let taille = valeur - 3;
+        if taille > 65535 || o + taille > flux.len() {
+            break;
+        }
+        let paquet = &flux[o..o + taille];
+        if paquet.len() > lus + 1 && paquet[lus] == 0xFF && paquet[lus + 1] == 0xFF {
+            // Un groupe compressé occupe un octet de plus au premier niveau.
+            let fin = (o + taille + 1).min(flux.len());
+            let charge = &flux[o + lus..fin];
+            if charge.len() <= 6 {
+                break;
+            }
+            let attendu =
+                u32::from_le_bytes([charge[2], charge[3], charge[4], charge[5]]) as usize;
+            if attendu == 0
+                || attendu > 1_000_000
+                || lz4_flex::block::decompress(&charge[6..], attendu).is_err()
+            {
+                break; // un groupe qui ne se décompresse pas : ce départ est faux
+            }
+            groupes += 1;
+            if groupes >= GROUPES_POUR_ETRE_SUR {
+                return (groupes, limite - debut); // assez vu
+            }
+            o += taille + 1;
+        } else {
+            o += taille;
+        }
+    }
+    (groupes, o - debut)
+}
+
+pub fn debut_aligne(flux: &[u8]) -> Option<usize> {
+    let mut meilleur: Option<(usize, usize, usize)> = None; // (groupes, octets, début)
+    for debut in 0..flux.len().min(CANDIDATS_AU_PLUS) {
+        let (groupes, octets) = qualite(flux, debut);
+        if groupes >= GROUPES_POUR_ETRE_SUR {
+            return Some(debut);
+        }
+        // Un départ qui explique le tampon jusqu'au bout convient aussi : les
+        // tampons courts n'ont pas toujours un seul groupe compressé.
+        if octets > 0 && debut + octets >= flux.len() && groupes > 0 {
+            return Some(debut);
+        }
+        if meilleur.map_or(true, |(g, o, _)| (groupes, octets) > (g, o)) {
+            meilleur = Some((groupes, octets, debut));
+        }
+    }
+    meilleur
+        .filter(|(groupes, octets, debut)| {
+            *groupes > 0 || (*octets >= MINIMUM_CREDIBLE && debut + octets >= flux.len())
+        })
+        .map(|(_, _, debut)| debut)
 }
 
 /// Même découpage que `consume_stream` d'A2Tools : longueur varint (moins 3) et
