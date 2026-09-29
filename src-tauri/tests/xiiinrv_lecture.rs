@@ -11,99 +11,24 @@
 //! PM 5 678, 27 pièces d'équipement, 5 familles de pets et 35 effets.
 
 use xiiinrv_meter_lib::xiiinrv::collecte;
+// Le découpage du flux est celui du meter lui-même, pas une copie : c'est lui
+// qui relit les paquets gardés de côté avant le verrouillage du port.
+use xiiinrv_meter_lib::xiiinrv::tampon::parcourir;
 
 /// Les deux tests partagent le même interrupteur de lecture et le même état :
 /// ils ne peuvent pas tourner en même temps, sinon l'un ferme ce que l'autre
 /// vient d'ouvrir. Ce verrou les fait passer l'un après l'autre.
 static VERROU: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// L'opcode d'un paquet, juste pour le décompte affiché : on saute la longueur
+/// (varint, un octet dans l'immense majorité des cas) et on lit deux octets.
+fn opcode(p: &[u8]) -> Option<(u8, u8)> {
+    let lus = if p.first().copied().unwrap_or(0) & 0x80 == 0 { 1 } else { 2 };
+    Some((*p.get(lus)?, *p.get(lus + 1)?))
+}
+
 const JOURNAL: &str =
     r"D:\9 - meters aion\kuroukihime\Aion2DpsMeter-v1.10.3.302-win-x64\PacketLogs\packets_20260920_090846.txt";
-
-/// Entier à longueur variable : (valeur, octets lus).
-fn varint(d: &[u8], o: usize) -> Option<(usize, usize)> {
-    let mut valeur = 0usize;
-    let mut decalage = 0;
-    let mut lus = 0;
-    loop {
-        let octet = *d.get(o + lus)?;
-        lus += 1;
-        valeur |= ((octet & 0x7F) as usize) << decalage;
-        if octet & 0x80 == 0 {
-            return Some((valeur, lus));
-        }
-        decalage += 7;
-        if decalage >= 32 {
-            return None;
-        }
-    }
-}
-
-/// Même découpage que `consume_stream` d'A2Tools : longueur varint (moins 3) et
-/// groupes compressés `FF FF`. Deux détails qui comptent : au premier niveau un
-/// groupe occupe **un octet de plus**, et on se resynchronise octet par octet
-/// plutôt que d'abandonner le flux à la première anomalie.
-fn parcourir(flux: &[u8], voir: &mut impl FnMut(&[u8])) {
-    parcourir_a(flux, voir, 0);
-}
-
-fn parcourir_a(flux: &[u8], voir: &mut impl FnMut(&[u8]), profondeur: u32) {
-    let interne = profondeur > 0;
-    let mut o = 0usize;
-    while o < flux.len() {
-        if flux[o] == 0 {
-            o += 1;
-            continue;
-        }
-        let Some((valeur, lus)) = varint(flux, o) else {
-            if interne {
-                break;
-            }
-            o += 1;
-            continue;
-        };
-        if valeur <= 3 {
-            if interne {
-                break;
-            }
-            o += 1;
-            continue;
-        }
-        let taille = valeur - 3;
-        if taille > 65535 || o + taille > flux.len() {
-            if interne {
-                break;
-            }
-            o += 1;
-            continue;
-        }
-
-        let paquet = &flux[o..o + taille];
-        let est_groupe =
-            paquet.len() > lus + 1 && paquet[lus] == 0xFF && paquet[lus + 1] == 0xFF;
-
-        if est_groupe {
-            let supplement = if interne { 0 } else { 1 };
-            let fin = (o + taille + supplement).min(flux.len());
-            let charge = &flux[o + lus..fin];
-            if charge.len() > 6 {
-                let taille_decompressee =
-                    u32::from_le_bytes([charge[2], charge[3], charge[4], charge[5]]) as usize;
-                if taille_decompressee > 0 && taille_decompressee <= 1_000_000 {
-                    if let Ok(decompresse) =
-                        lz4_flex::block::decompress(&charge[6..], taille_decompressee)
-                    {
-                        parcourir_a(&decompresse, voir, profondeur + 1);
-                    }
-                }
-            }
-            o += taille + supplement;
-        } else {
-            voir(paquet);
-            o += taille;
-        }
-    }
-}
 
 #[test]
 fn lit_la_fiche_complete_depuis_un_enregistrement_reel() {
@@ -137,10 +62,8 @@ fn lit_la_fiche_complete_depuis_un_enregistrement_reel() {
     for (_cle, tampon) in &flux {
         parcourir(tampon, &mut |p| {
             paquets += 1;
-            if let Some((_, lus)) = varint(p, 0) {
-                if let (Some(a), Some(b)) = (p.get(lus), p.get(lus + 1)) {
-                    *opcodes.entry((*a, *b)).or_insert(0usize) += 1;
-                }
+            if let Some(o) = opcode(p) {
+                *opcodes.entry(o).or_insert(0usize) += 1;
             }
             collecte::observer(p);
         });

@@ -139,7 +139,7 @@ pub async fn envoyer_maintenant() -> Result<String, String> {
     let c = config().lock().clone();
     let jeton = c.jeton.ok_or_else(|| "Aucun jeton renseigné.".to_string())?;
     let etat = lire_etat();
-    if !etat.pret() {
+    if !etat.envoyable() {
         return Err(
             "Rien à envoyer pour l'instant : entrez en jeu avec votre personnage, le meter lira sa fiche."
                 .to_string(),

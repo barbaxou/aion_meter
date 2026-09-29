@@ -26,8 +26,10 @@
 
 pub mod collecte;
 pub mod envoi;
+pub mod tampon;
 
-pub use collecte::{interesse, observer};
+pub use collecte::observer;
+pub use tampon::{mettre_de_cote, relire};
 pub use envoi::{demarrer, envoyer_maintenant, etat_partage};
 
 /// Clés de réglage, rangées avec celles d'A2Tools dans settings.json.

@@ -190,13 +190,11 @@ impl CaptureDispatcher {
                 if looks_like_tls(&cap.data) {
                     continue;
                 }
-                // Ajout XIII NRV : tant que le port n'est pas verrouillé, seuls
-                // les paquets de combat passent. La fiche de personnage arrive
-                // justement avant ce verrouillage : on la laisse passer aussi,
-                // et seulement quand le partage est activé.
-                if !contains_any(&cap.data, &COMBAT_SIGNATURES)
-                    && !crate::xiiinrv::interesse(cap.src_port, cap.dst_port, &cap.data)
-                {
+                // Ajout XIII NRV : on garde une copie de ce qui passe avant le
+                // verrouillage, pour le relire quand on saura quel flux est celui
+                // du jeu. Le filtre lui-même n'est pas touché.
+                crate::xiiinrv::mettre_de_cote(cap.src_port, cap.dst_port, &cap.data);
+                if !contains_any(&cap.data, &COMBAT_SIGNATURES) {
                     continue;
                 }
             }
@@ -246,6 +244,10 @@ impl CaptureDispatcher {
                 unlocked && sig_hits.get(&key).map(|(c, _)| *c).unwrap_or(0) >= SIGNATURE_LOCK_THRESHOLD;
             if signature_locked && self.port_detector.current_port().is_none() {
                 self.port_detector.confirm_candidate(cap.src_port, cap.dst_port, cap.device_name.as_deref());
+                // Ajout XIII NRV : c'est maintenant qu'on connaît le flux du jeu.
+                // On relit ce qu'on avait gardé de côté : l'inventaire et le
+                // Combat Power de l'entrée en jeu y sont.
+                crate::xiiinrv::relire(cap.src_port, cap.dst_port);
                 // On lock, GC the orphaned candidate assemblers (the relay's
                 // duplicate external flows) so only the locked flow is processed.
                 if self.port_detector.current_port().is_some() {

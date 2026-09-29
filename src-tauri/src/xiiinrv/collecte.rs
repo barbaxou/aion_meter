@@ -9,6 +9,7 @@ use parking_lot::Mutex;
 use serde::Serialize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
+use tracing::info;
 
 /// Emplacements retenus : équipement, runes (23-24), arcanes (41-45).
 fn emplacement_valide(e: u8) -> bool {
@@ -59,9 +60,19 @@ pub struct Etat {
 }
 
 impl Etat {
-    /// Y a-t-il de quoi envoyer ? Le nom du personnage est indispensable : c'est
-    /// lui qui relie la fiche au Roster du site.
+    /// Y a-t-il de quoi envoyer **automatiquement** ?
+    ///
+    /// Le nom est indispensable — c'est lui qui relie la fiche au Roster. Et on
+    /// attend l'équipement : la fiche de personnage et l'inventaire n'arrivent
+    /// pas au même instant, et partir dès la fiche lue envoyait un personnage
+    /// sans une seule pièce.
     pub fn pret(&self) -> bool {
+        self.nom.is_some() && !self.equipement.is_empty()
+    }
+
+    /// Y a-t-il quelque chose à envoyer quand on clique soi-même sur le bouton ?
+    /// Plus permissif : si le membre insiste, on envoie ce qu'on a.
+    pub fn envoyable(&self) -> bool {
         self.nom.is_some() && (!self.equipement.is_empty() || self.item_level.is_some())
     }
 }
@@ -80,7 +91,7 @@ pub fn ouvrir_lecture(ouverte: bool) {
         // On vient de refermer : on n'a aucune raison de garder la fiche,
         // ni de continuer à laisser passer un flux.
         vider();
-        flux_retenus().lock().clear();
+        super::tampon::oublier();
     }
 }
 
@@ -172,52 +183,6 @@ fn entete(packet: &[u8]) -> Option<([u8; 2], usize)> {
 // Point d'entrée : un paquet, déjà découpé par A2Tools
 // ---------------------------------------------------------------------------
 
-/// Faut-il laisser passer ce trafic avant que le port de combat ne soit
-/// verrouillé ?
-///
-/// Tant que le port n'est pas verrouillé, A2Tools écarte tout ce qui ne
-/// ressemble pas à du combat. Or la fiche de personnage, l'inventaire et le
-/// Combat Power arrivent précisément à ce moment, à l'entrée en jeu.
-///
-/// Deux essais avant celui-ci :
-///   1. ne laisser passer que les morceaux contenant l'un de nos opcodes —
-///      insuffisant : un paquet de plusieurs kilo-octets est découpé par le
-///      réseau et seul le premier morceau porte l'opcode, les suivants étaient
-///      jetés et le paquet ne pouvait plus être reconstitué ;
-///   2. tout laisser passer — trop large : le meter ne reconnaissait plus le
-///      flux du jeu et ne détectait plus les combats.
-///
-/// D'où cette version : dès qu'un de nos paquets est vu sur un flux, **ce
-/// flux-là** est retenu et passe entièrement. Les autres flux restent filtrés
-/// comme avant, donc la détection du combat n'est pas touchée.
-pub fn interesse(port_a: u16, port_b: u16, donnees: &[u8]) -> bool {
-    if !lecture_ouverte() {
-        return false;
-    }
-    let cle = (port_a.min(port_b), port_a.max(port_b));
-    if flux_retenus().lock().contains(&cle) {
-        return true;
-    }
-
-    const CIBLES: [[u8; 2]; 4] = [[0x33, 0x36], [0x11, 0x56], [0x56, 0x36], [0x00, 0x90]];
-    let vu = donnees
-        .windows(2)
-        .any(|f| CIBLES.iter().any(|c| f[0] == c[0] && f[1] == c[1]));
-    if vu {
-        let mut liste = flux_retenus().lock();
-        if !liste.contains(&cle) {
-            liste.push(cle);
-        }
-    }
-    vu
-}
-
-static FLUX_RETENUS: OnceLock<Mutex<Vec<(u16, u16)>>> = OnceLock::new();
-
-fn flux_retenus() -> &'static Mutex<Vec<(u16, u16)>> {
-    FLUX_RETENUS.get_or_init(|| Mutex::new(Vec::new()))
-}
-
 pub fn observer(packet: &[u8]) {
     // Rien n'est lu tant qu'aucun jeton n'est enregistré et que le partage n'est
     // pas coché. C'est le tout premier test, avant même de regarder le paquet.
@@ -242,10 +207,19 @@ pub fn observer(packet: &[u8]) {
     }
 
     match opcode {
-        [0x33, 0x36] => lire_fiche(packet),
-        [0x11, 0x56] => lire_equipement(packet),
+        [0x33, 0x36] => {
+            info!("XIII NRV : fiche de personnage vue ({} octets)", packet.len());
+            lire_fiche(packet)
+        }
+        [0x11, 0x56] => {
+            info!("XIII NRV : inventaire vu ({} octets)", packet.len());
+            lire_equipement(packet)
+        }
         [0x56, 0x36] => lire_combat_power(packet),
-        [0x00, 0x90] => lire_pets(packet),
+        [0x00, 0x90] => {
+            info!("XIII NRV : pets vus ({} octets)", packet.len());
+            lire_pets(packet)
+        }
         _ => {}
     }
 }
@@ -392,8 +366,10 @@ fn lire_equipement(packet: &[u8]) {
     }
 
     if pieces.is_empty() {
+        info!("XIII NRV : inventaire lu mais aucune pièce reconnue");
         return;
     }
+    info!("XIII NRV : {} pièces d'équipement lues", pieces.len());
     pieces.sort_by_key(|p| p.emplacement);
     etat().lock().equipement = pieces;
 }
