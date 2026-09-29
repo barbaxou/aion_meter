@@ -6,7 +6,9 @@
       "total": "DGT",
       "ariaDps": "Affiche les DPS",
       "ariaDamage": "Affiche les dégâts totaux"
-    }
+    },
+    "reduire": "Réduire",
+    "fermer": "Fermer"
   },
   "details": {
     "header": "Détails",

@@ -6,7 +6,9 @@
       "total": "DMG",
       "ariaDps": "Showing DPS",
       "ariaDamage": "Showing total damage"
-    }
+    },
+    "reduire": "Minimize",
+    "fermer": "Close"
   },
   "details": {
     "header": "Details",

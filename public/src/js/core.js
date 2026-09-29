@@ -2271,6 +2271,23 @@ class DpsApp {
       this.toggleSettingsPanel();
     });
 
+    // Ajout XIII NRV : réduire et fermer. La fenêtre est sans décorations
+    // système, donc ces deux gestes n'existaient nulle part — on ne pouvait
+    // fermer le meter que par le gestionnaire des tâches.
+    const fenetre = () => window.__TAURI__?.window?.getCurrentWindow?.();
+    const surClicOuEntree = (element, action) => {
+      if (!element) return;
+      element.addEventListener("click", action);
+      element.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          action();
+        }
+      });
+    };
+    surClicOuEntree(document.querySelector(".reduireBtn"), () => fenetre()?.minimize?.());
+    surClicOuEntree(document.querySelector(".fermerBtn"), () => fenetre()?.close?.());
+
     this.settingsClose?.addEventListener("click", () => this.closeSettingsPanel());
 
     const advancedToggle = document.querySelector(".settingsAdvancedToggle");
