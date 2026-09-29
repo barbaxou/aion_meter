@@ -367,6 +367,111 @@ fn rejoue_une_entree_en_jeu_reelle_sans_rien_perdre() {
     );
 }
 
+/// Changer de personnage ne doit pas produire une fiche mélangée.
+///
+/// À l'entrée en jeu, le nom arrive **en dernier** : le 29/09/2026, huit
+/// secondes après l'équipement (13:31:22 contre 13:31:30). Entre les deux, la
+/// fiche en mémoire porte l'équipement du nouveau personnage et le nom de
+/// l'ancien. Un envoi tombant dans cette fenêtre attribuerait le stuff d'un
+/// personnage à un autre. Les PV et PM sont pires encore : `lire_fiche` ne les
+/// écrase que si la fiche en contient, et toutes n'en contiennent pas — ceux du
+/// personnage précédent restaient donc indéfiniment.
+#[test]
+fn changer_de_personnage_ne_melange_pas_deux_fiches() {
+    use std::time::{Duration, Instant};
+
+    let maintenant = Instant::now();
+    let garni = |age: Duration| {
+        let lu_le = maintenant.checked_sub(age);
+        collecte::Etat {
+            nom: Some("Barbaxx".to_string()),
+            pv: Some(25_835),
+            pm: Some(5_678),
+            combat_power: Some(132_462),
+            cp_vu_le: lu_le,
+            equipement: vec![collecte::Piece {
+                emplacement: 1,
+                item_id: 110_430_111,
+                enchantement: 12,
+                conteneur: 0x0B,
+            }],
+            equipement_vu_le: lu_le,
+            ..Default::default()
+        }
+    };
+
+    // Neuf secondes : c'est l'écart mesuré entre l'équipement et le nom. Tout
+    // cela fait partie de la même entrée en jeu et doit être gardé.
+    let mut e = garni(Duration::from_secs(9));
+    e.changer_de_personnage(maintenant);
+    assert_eq!(e.equipement.len(), 1, "équipement de la même entrée en jeu, à garder");
+    assert_eq!(e.combat_power, Some(132_462), "Combat Power de la même entrée en jeu");
+
+    // Deux minutes : cela appartient au personnage précédent.
+    let mut e = garni(Duration::from_secs(120));
+    e.changer_de_personnage(maintenant);
+    assert!(e.equipement.is_empty(), "équipement d'un autre personnage, à jeter");
+    assert_eq!(e.combat_power, None, "Combat Power d'un autre personnage");
+
+    // Les PV et PM partent dans tous les cas : ils viennent de la fiche, et la
+    // fiche qui suit ce changement les remplira si elle les porte.
+    assert_eq!(e.pv, None, "les PV d'un autre personnage ne doivent pas rester");
+    assert_eq!(e.pm, None, "les PM d'un autre personnage ne doivent pas rester");
+    let mut recent = garni(Duration::from_secs(9));
+    recent.changer_de_personnage(maintenant);
+    assert_eq!(recent.pv, None, "les PV partent même pour une bascule immédiate");
+
+    // Et le tout sur l'enregistrement réel : même paquet de fiche, autre nom.
+    let _garde = VERROU.lock().unwrap_or_else(|e| e.into_inner());
+    let Ok(contenu) = std::fs::read_to_string(JOURNAL) else {
+        eprintln!("enregistrement absent, reste du test ignoré : {}", JOURNAL);
+        return;
+    };
+
+    collecte::vider();
+    collecte::ouvrir_lecture(true);
+    let mut flux: std::collections::HashMap<String, Vec<u8>> = std::collections::HashMap::new();
+    for ligne in contenu.lines() {
+        let champs: Vec<&str> = ligne.trim_end().split('|').collect();
+        if champs.len() != 3 || champs[1] == "STREAMKEY" {
+            continue;
+        }
+        if let Some(octets) = hex_vers_octets(champs[2].trim()) {
+            flux.entry(champs[1].to_string()).or_default().extend(octets);
+        }
+    }
+    let mut fiche: Option<Vec<u8>> = None;
+    for tampon in flux.values() {
+        parcourir(tampon, &mut |p| {
+            if opcode(p) == Some((0x33, 0x36)) {
+                fiche = Some(p.to_vec());
+            }
+            collecte::observer(p);
+        });
+    }
+    let avant = collecte::lire_etat();
+    assert_eq!(avant.nom.as_deref(), Some("Barbaxx"));
+    assert_eq!(avant.equipement.len(), 27);
+
+    let mut autre = fiche.expect("aucun paquet de fiche dans l'enregistrement");
+    let position = autre
+        .windows(7)
+        .position(|f| f == b"Barbaxx")
+        .expect("nom introuvable dans le paquet de fiche");
+    autre[position..position + 7].copy_from_slice(b"Barbaxy");
+    collecte::observer(&autre);
+
+    let apres = collecte::lire_etat();
+    collecte::ouvrir_lecture(false);
+    collecte::vider();
+    assert_eq!(apres.nom.as_deref(), Some("Barbaxy"), "le nouveau nom remplace l'ancien");
+    assert_eq!(
+        apres.equipement.len(),
+        27,
+        "l'équipement venait d'être lu : même entrée en jeu, on le garde"
+    );
+}
+
 fn hex_vers_octets(hexa: &str) -> Option<Vec<u8>> {
     // Le journal commence par une marque d'ordre des octets : on écarte toute
     // ligne qui n'est pas strictement de l'hexadécimal.

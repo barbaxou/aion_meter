@@ -18,6 +18,12 @@ fn emplacement_valide(e: u8) -> bool {
 
 const CONTENEUR_EQUIPE: u8 = 0x0B;
 
+/// Deux lectures séparées de moins que ça font partie de la même entrée en jeu.
+/// Mesuré le 29/09 : Combat Power, inventaire, pets et fiche arrivent en neuf
+/// secondes. Une minute laisse de la marge sans jamais rapprocher deux entrées
+/// en jeu différentes.
+const MEME_ENTREE_EN_JEU: std::time::Duration = std::time::Duration::from_secs(60);
+
 #[derive(Clone, Debug, Serialize, PartialEq)]
 pub struct Piece {
     pub emplacement: u8,
@@ -57,6 +63,12 @@ pub struct Etat {
     pub cp_vu_le: Option<std::time::Instant>,
     pub equipement: Vec<Piece>,
     pub pets: Vec<Genus>,
+    /// Quand l'équipement et les pets ont été lus. À l'entrée en jeu ils
+    /// arrivent **avant** le nom — huit secondes avant, mesuré le 29/09 — donc
+    /// sans ces dates on ne saurait pas, au changement de personnage, lesquels
+    /// appartiennent au nouveau et lesquels à l'ancien.
+    pub equipement_vu_le: Option<std::time::Instant>,
+    pub pets_vu_le: Option<std::time::Instant>,
 }
 
 impl Etat {
@@ -68,6 +80,46 @@ impl Etat {
     /// sans une seule pièce.
     pub fn pret(&self) -> bool {
         self.nom.is_some() && !self.equipement.is_empty()
+    }
+
+    /// Un autre personnage vient d'entrer en jeu : jeter ce qui appartenait au
+    /// précédent.
+    ///
+    /// À l'entrée en jeu le nom arrive **en dernier** — huit secondes après
+    /// l'équipement, mesuré le 29/09/2026. Entre les deux, la fiche porte
+    /// l'équipement du nouveau personnage et le nom de l'ancien, et un envoi
+    /// tombant là attribuerait le stuff d'un personnage à un autre. Tout ce qui
+    /// a été lu peu avant ce nom fait donc partie de la même entrée en jeu et se
+    /// garde ; le reste s'efface.
+    ///
+    /// Prend l'heure en paramètre plutôt que de la lire : c'est ce qui permet de
+    /// vérifier les deux cas sans attendre une minute.
+    pub fn changer_de_personnage(&mut self, maintenant: std::time::Instant) {
+        let meme_entree = |quand: Option<std::time::Instant>| {
+            quand.is_some_and(|t| {
+                maintenant.checked_duration_since(t).is_some_and(|age| age < MEME_ENTREE_EN_JEU)
+            })
+        };
+        if !meme_entree(self.equipement_vu_le) {
+            self.equipement.clear();
+            self.equipement_vu_le = None;
+        }
+        if !meme_entree(self.pets_vu_le) {
+            self.pets.clear();
+            self.pets_vu_le = None;
+        }
+        if !meme_entree(self.cp_vu_le) {
+            self.combat_power = None;
+            self.cp_vu_le = None;
+        }
+        // Les PV et PM arrivent dans la fiche elle-même, mais pas dans toutes :
+        // la version imbriquée de l'entrée en jeu ne les porte pas, d'où le
+        // « on n'écrase que si la fiche en contient » de `lire_fiche`. Au
+        // changement de personnage, cette prudence se retourne contre nous : elle
+        // laisserait les PV d'un autre. On les efface, la fiche qui suit les
+        // remplira.
+        self.pv = None;
+        self.pm = None;
     }
 
     /// Y a-t-il quelque chose à envoyer quand on clique soi-même sur le bouton ?
@@ -286,6 +338,17 @@ fn lire_fiche(packet: &[u8]) {
     let (pv, pm) = lire_pv_pm(packet);
 
     let mut e = etat().lock();
+    // Changement de personnage : ce qui a été lu il y a longtemps appartient au
+    // précédent, et une fiche mélangée serait pire que pas de fiche du tout. Ce
+    // qui vient d'arriver, lui, fait partie de la même entrée en jeu que ce nom.
+    if e.nom.as_deref().is_some_and(|precedent| precedent != nom) {
+        info!(
+            "XIII NRV : changement de personnage ({} → {}), on repart de cette entrée en jeu",
+            e.nom.as_deref().unwrap_or(""),
+            nom
+        );
+        e.changer_de_personnage(std::time::Instant::now());
+    }
     e.nom = Some(nom);
     e.serveur = Some(nom_du_serveur(serveur));
     e.niveau = Some(niveau);
@@ -382,7 +445,9 @@ fn lire_equipement(packet: &[u8]) {
     }
     info!("XIII NRV : {} pièces d'équipement lues", pieces.len());
     pieces.sort_by_key(|p| p.emplacement);
-    etat().lock().equipement = pieces;
+    let mut e = etat().lock();
+    e.equipement = pieces;
+    e.equipement_vu_le = Some(std::time::Instant::now());
 }
 
 // ---------------------------------------------------------------------------
@@ -493,7 +558,9 @@ fn lire_pets(packet: &[u8]) {
     }
 
     if !familles.is_empty() {
-        etat().lock().pets = familles;
+        let mut e = etat().lock();
+        e.pets = familles;
+        e.pets_vu_le = Some(std::time::Instant::now());
     }
 }
 
