@@ -19,7 +19,7 @@ use std::time::Duration;
 use tracing::{info, warn};
 
 use super::collecte::{lire_etat, ouvrir_lecture, Etat};
-use super::URL_PAR_DEFAUT;
+use super::{CLE_PUBLIQUE, URL_PAR_DEFAUT};
 
 /// Délai minimum entre deux envois. Une fiche de personnage ne change pas toutes
 /// les minutes : quinze minutes suffisent largement et ménagent le serveur.
@@ -161,6 +161,12 @@ async fn envoyer(jeton: &str, url: &str, etat: &Etat) -> Result<String, String> 
     let reponse = client
         .post(url)
         .header("Content-Type", "application/json")
+        // Supabase peut exiger un jeton d'accès sur ses fonctions Edge. On
+        // présente la clé publique du projet, celle que le site sert déjà à
+        // tout le monde : l'envoi passe quel que soit le réglage, et la vraie
+        // authentification reste le jeton personnel, vérifié en base.
+        .header("apikey", CLE_PUBLIQUE)
+        .header("Authorization", format!("Bearer {}", CLE_PUBLIQUE))
         .body(contenu)
         .send()
         .await
