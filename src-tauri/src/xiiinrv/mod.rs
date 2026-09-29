@@ -29,7 +29,7 @@ pub mod envoi;
 pub mod tampon;
 
 pub use collecte::observer;
-pub use tampon::{mettre_de_cote, relire};
+pub use tampon::{deverrouille, recevoir, verrouille};
 pub use envoi::{demarrer, envoyer_maintenant, etat_partage};
 
 /// Clés de réglage, rangées avec celles d'A2Tools dans settings.json.

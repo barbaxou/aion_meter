@@ -13,7 +13,7 @@
 use xiiinrv_meter_lib::xiiinrv::collecte;
 // Le découpage du flux est celui du meter lui-même, pas une copie : c'est lui
 // qui relit les paquets gardés de côté avant le verrouillage du port.
-use xiiinrv_meter_lib::xiiinrv::tampon::{debut_aligne, mettre_de_cote, parcourir, relire};
+use xiiinrv_meter_lib::xiiinrv::tampon::{debut_aligne, deverrouille, parcourir, recevoir, verrouille};
 
 /// Les deux tests partagent le même interrupteur de lecture et le même état :
 /// ils ne peuvent pas tourner en même temps, sinon l'un ferme ce que l'autre
@@ -258,8 +258,11 @@ fn une_coupe_au_milieu_dun_paquet_ne_fait_rien_perdre() {
     for coupe in 1..=COUPES {
         collecte::vider();
         collecte::ouvrir_lecture(true);
-        mettre_de_cote(4321, 8765, &morceau[coupe..]);
-        relire(4321, 8765);
+        // Chaque coupe repart d'un flux vierge : sans ça, la fin du tampon de la
+        // coupe précédente se collerait devant celui-ci.
+        deverrouille();
+        recevoir(4321, 8765, &morceau[coupe..]);
+        verrouille(4321, 8765);
         match collecte::lire_etat().combat_power {
             Some(lu) if lu != attendu => faux.push((coupe, lu)),
             None => perdus.push(coupe),
@@ -290,6 +293,77 @@ fn une_coupe_au_milieu_dun_paquet_ne_fait_rien_perdre() {
         perdus.len(),
         COUPES,
         perdus.len() * 100 / COUPES
+    );
+}
+
+/// Rejoue une vraie entrée en jeu, morceau par morceau, comme le meter la reçoit.
+///
+/// Le 29/09/2026 à 12:12, barbaxou est entré en jeu avec Barbaxx sur une
+/// connexion toute neuve. Le journal des paquets montre que le jeu a envoyé les
+/// trois paquets du défilement du Combat Power (77 148 → 111 394 → 132 462) et
+/// l'inventaire complet, 13 732 octets. Le meter n'a vu que le premier Combat
+/// Power, et aucune pièce d'équipement : il lisait alors les paquets là où
+/// A2Tools les avait découpés, et ce découpage-là en perdait.
+///
+/// Ce test rejoue exactement ces octets dans notre propre réassemblage, morceau
+/// par morceau et dans l'ordre. Il doit rendre les quatre paquets.
+#[test]
+fn rejoue_une_entree_en_jeu_reelle_sans_rien_perdre() {
+    const JOURNAL_1212: &str = r"D:\9 - meters aion\xiiinrv\entree_en_jeu_20260929_1212.txt";
+    let _garde = VERROU.lock().unwrap_or_else(|e| e.into_inner());
+    let Ok(contenu) = std::fs::read_to_string(JOURNAL_1212) else {
+        eprintln!("enregistrement absent, test ignoré : {}", JOURNAL_1212);
+        return;
+    };
+
+    collecte::vider();
+    collecte::ouvrir_lecture(true);
+
+    // Le journal couvre deux connexions successives : celle d'avant le
+    // redémarrage du jeu, et la nouvelle. Leur clé de flux est la même — le port
+    // du serveur — donc les coller bout à bout désynchroniserait tout. On ne
+    // garde que la seconde.
+    const DEPART: &str = "2026-09-29T12:12:16";
+    let mut morceaux = 0usize;
+    for ligne in contenu.lines() {
+        let champs: Vec<&str> = ligne.trim_end().split('|').collect();
+        if champs.len() != 3 || champs[1] != "Client:61944" || champs[0] < DEPART {
+            continue;
+        }
+        let Some(octets) = hex_vers_octets(champs[2].trim()) else {
+            continue;
+        };
+        if morceaux == 0 {
+            // Le premier morceau sert de tampon d'avant verrouillage, puis on
+            // déclare le flux du jeu : c'est la séquence réelle du dispatcher.
+            recevoir(61944, 50349, &octets);
+            verrouille(61944, 50349);
+        } else {
+            recevoir(61944, 50349, &octets);
+        }
+        morceaux += 1;
+    }
+
+    let e = collecte::lire_etat();
+    println!(
+        "{} morceaux rejoués : cp={:?} pièces={} niveau={:?}",
+        morceaux,
+        e.combat_power,
+        e.equipement.len(),
+        e.niveau
+    );
+    collecte::ouvrir_lecture(false);
+    collecte::vider();
+
+    assert!(morceaux > 100, "journal trop court : {} morceaux", morceaux);
+    assert_eq!(
+        e.combat_power,
+        Some(132462),
+        "le défilement du Combat Power doit être lu en entier, pas seulement sa première marche"
+    );
+    assert!(
+        !e.equipement.is_empty(),
+        "l'inventaire de 13 732 octets était bien dans le flux : aucune pièce lue"
     );
 }
 

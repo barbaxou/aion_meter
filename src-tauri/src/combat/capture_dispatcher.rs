@@ -115,6 +115,8 @@ impl CaptureDispatcher {
                 let running = window_detector::find_aion2_window();
                 if !running && is_aion_running {
                     self.port_detector.reset();
+                    // Ajout XIII NRV : la connexion au jeu est tombée, on cesse de la suivre.
+                    crate::xiiinrv::deverrouille();
                     self.ping_tracker.reset();
                     assemblers.clear();
                     sig_hits.clear();
@@ -132,6 +134,8 @@ impl CaptureDispatcher {
                 if last_parsed > 0 && now - last_parsed > STALE_CONNECTION_MS {
                     info!("No packets parsed for {}ms, resetting lock", now - last_parsed);
                     self.port_detector.reset();
+                    // Ajout XIII NRV : la connexion au jeu est tombée, on cesse de la suivre.
+                    crate::xiiinrv::deverrouille();
                     self.ping_tracker.reset();
                     assemblers.clear();
                     sig_hits.clear();
@@ -190,14 +194,21 @@ impl CaptureDispatcher {
                 if looks_like_tls(&cap.data) {
                     continue;
                 }
-                // Ajout XIII NRV : on garde une copie de ce qui passe avant le
-                // verrouillage, pour le relire quand on saura quel flux est celui
-                // du jeu. Le filtre lui-même n'est pas touché.
-                crate::xiiinrv::mettre_de_cote(cap.src_port, cap.dst_port, &cap.data);
+                // Ajout XIII NRV : on garde de côté ce qui passe avant le
+                // verrouillage, pour le lire quand on saura quel flux est celui du
+                // jeu. Le filtre lui-même n'est pas touché.
+                crate::xiiinrv::recevoir(cap.src_port, cap.dst_port, &cap.data);
                 if !contains_any(&cap.data, &COMBAT_SIGNATURES) {
                     continue;
                 }
             }
+
+            // Ajout XIII NRV : notre lecture ne passe plus par le réassemblage
+            // d'A2Tools. Le 29/09/2026 le journal des paquets a montré qu'il
+            // perdait, sur une même entrée en jeu, l'inventaire complet et deux
+            // des trois paquets du Combat Power, là où notre propre découpeur
+            // rendait les quatre. On reçoit donc les morceaux bruts.
+            crate::xiiinrv::recevoir(cap.src_port, cap.dst_port, &cap.data);
 
             // Log raw packet if packet logging is enabled
             crate::logging::logger::log_packet(&cap);
@@ -244,10 +255,10 @@ impl CaptureDispatcher {
                 unlocked && sig_hits.get(&key).map(|(c, _)| *c).unwrap_or(0) >= SIGNATURE_LOCK_THRESHOLD;
             if signature_locked && self.port_detector.current_port().is_none() {
                 self.port_detector.confirm_candidate(cap.src_port, cap.dst_port, cap.device_name.as_deref());
-                // Ajout XIII NRV : c'est maintenant qu'on connaît le flux du jeu.
-                // On relit ce qu'on avait gardé de côté : l'inventaire et le
-                // Combat Power de l'entrée en jeu y sont.
-                crate::xiiinrv::relire(cap.src_port, cap.dst_port);
+                // Ajout XIII NRV : c'est maintenant qu'on connaît le flux du jeu. On
+                // lit ce qu'on avait gardé de côté — l'inventaire et le Combat
+                // Power de l'entrée en jeu y sont — puis on suit ce flux.
+                crate::xiiinrv::verrouille(cap.src_port, cap.dst_port);
                 // On lock, GC the orphaned candidate assemblers (the relay's
                 // duplicate external flows) so only the locked flow is processed.
                 if self.port_detector.current_port().is_some() {

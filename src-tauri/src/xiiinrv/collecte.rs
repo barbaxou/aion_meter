@@ -215,7 +215,18 @@ pub fn observer(packet: &[u8]) {
             info!("XIII NRV : inventaire vu ({} octets)", packet.len());
             lire_equipement(packet)
         }
-        [0x56, 0x36] => lire_combat_power(packet),
+        [0x56, 0x36] => {
+            // Marqueur de diagnostic : le défilement du Combat Power arrive en
+            // plusieurs paquets et on garde le plus grand. Sans voir chacun
+            // d'eux, impossible de distinguer « il en manque » de « il est
+            // mal lu ». À retirer une fois la chaîne validée.
+            info!(
+                "XIII NRV : Combat Power vu ({} octets, valeur {:?})",
+                packet.len(),
+                u32_le(packet, 3)
+            );
+            lire_combat_power(packet)
+        }
         [0x00, 0x90] => {
             info!("XIII NRV : pets vus ({} octets)", packet.len());
             lire_pets(packet)
