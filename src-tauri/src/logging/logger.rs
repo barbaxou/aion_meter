@@ -160,6 +160,49 @@ struct PacketFileLogger {
     path: PathBuf,
 }
 
+/// Efface les journaux de paquets de plus de sept jours.
+///
+/// Ajout XIII NRV, suite a l'audit du 30/09/2026. Ces fichiers contiennent
+/// **tout** le trafic du jeu en clair : discussions, noms des autres joueurs,
+/// tout ce que le serveur envoie. Ils ne s'effacaient jamais — sur le poste de
+/// developpement, vingt-six fichiers s'etaient accumules pour 33 Mo. C'est un
+/// outil de diagnostic, pas une archive : au-dela d'une semaine, un journal n'a
+/// plus d'utilite et ne reste qu'un risque.
+///
+/// Silencieux a dessein : si rien ne peut etre efface, ce n'est pas une raison
+/// d'empecher le meter de demarrer.
+pub fn purger_vieux_journaux(log_dir: &std::path::Path) {
+    const JOURS_GARDES: u64 = 7;
+    let limite = std::time::Duration::from_secs(JOURS_GARDES * 24 * 60 * 60);
+    let Ok(entrees) = std::fs::read_dir(log_dir) else {
+        return;
+    };
+    let mut effaces = 0usize;
+    let mut octets = 0u64;
+    for entree in entrees.flatten() {
+        let chemin = entree.path();
+        let nom = chemin.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if !nom.starts_with("packets_") || !nom.ends_with(".txt") {
+            continue;
+        }
+        let Ok(infos) = entree.metadata() else { continue };
+        let Ok(modifie) = infos.modified() else { continue };
+        let Ok(age) = modifie.elapsed() else { continue };
+        if age > limite && std::fs::remove_file(&chemin).is_ok() {
+            effaces += 1;
+            octets += infos.len();
+        }
+    }
+    if effaces > 0 {
+        tracing::info!(
+            "XIII NRV : {} journaux de paquets de plus de {} jours effaces ({:.1} Mo)",
+            effaces,
+            JOURS_GARDES,
+            octets as f64 / 1e6
+        );
+    }
+}
+
 pub fn set_packet_log_enabled(enabled: bool, log_dir: &std::path::Path) {
     let prev = PACKET_LOG_ENABLED.swap(enabled, Ordering::SeqCst);
     if enabled && !prev {

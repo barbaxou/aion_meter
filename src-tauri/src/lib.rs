@@ -1285,6 +1285,10 @@ pub fn run() {
             let app_data_dir = app.path().app_data_dir()
                 .unwrap_or_else(|_| std::path::PathBuf::from("."));
             let _ = std::fs::create_dir_all(&app_data_dir);
+            // Ajout XIII NRV : les journaux de paquets contiennent tout le trafic
+            // du jeu en clair et ne s'effacaient jamais. On ne garde que la
+            // semaine ecoulee.
+            logging::logger::purger_vieux_journaux(&app_data_dir);
 
             // Load resources — try multiple paths (dev vs production)
             let skill_lookup = SkillLookup::new();
