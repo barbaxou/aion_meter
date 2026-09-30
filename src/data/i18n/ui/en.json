@@ -359,11 +359,14 @@
   },
   "mesures": {
     "titre": "Overlay display",
-    "aide": "Tick the measures to show. The button at the bottom of the overlay cycles through them; unticked ones are skipped.",
+    "principale": "Main value",
+    "secondaire": "Second value",
+    "aide": "Both values show at once on every row. The button at the bottom of the overlay cycles the main value.",
     "dps": "DPS",
-    "degats": "Total damage",
-    "part": "Damage share",
-    "soins": "Healing",
+    "totalDamage": "Total damage",
+    "contribution": "Damage share",
+    "heal": "Healing",
+    "aucune": "None",
     "soinsAide": "Healing also counts buffs: the game sends both in the same packet between allies, and nothing lets us tell them apart yet."
   }
 }

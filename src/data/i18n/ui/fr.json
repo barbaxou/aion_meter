@@ -359,11 +359,14 @@
   },
   "mesures": {
     "titre": "Affichage de l'overlay",
-    "aide": "Cochez les mesures à afficher. Le bouton en bas de l'overlay passe de l'une à l'autre ; celles qui ne sont pas cochées sont sautées.",
+    "principale": "Valeur principale",
+    "secondaire": "Valeur secondaire",
+    "aide": "Les deux valeurs s'affichent en même temps sur chaque ligne. Le bouton en bas de l'overlay fait défiler la valeur principale.",
     "dps": "DPS",
-    "degats": "Dégâts totaux",
-    "part": "Part des dégâts",
-    "soins": "Soins",
+    "totalDamage": "Dégâts totaux",
+    "contribution": "Part des dégâts",
+    "heal": "Soins",
+    "aucune": "Aucune",
     "soinsAide": "Les soins comptent aussi les buffs : le jeu envoie les deux dans le même paquet entre alliés, et rien ne permet de les séparer pour l'instant."
   }
 }

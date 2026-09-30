@@ -385,44 +385,40 @@
             <button class="closeX settingsClose" type="button" aria-label="Close">×</button>
           </div>
           <div class="settingsBody">
-            <!-- Ajout XIII NRV : chacun choisit ce que le bouton de l'overlay fait
-                 defiler. L'overlay fait trente pixels de haut : il montre une
-                 mesure a la fois, et le bouton passe de l'une a l'autre. -->
+            <!-- Ajout XIII NRV : la ligne de l'overlay a deux zones de texte. On
+                 choisit ce qui va dans chacune, au lieu de faire defiler une
+                 mesure unique. -->
             <section class="settingsGroup mesuresGroup">
               <div class="settingsMiniTitle" data-i18n="mesures.titre">Affichage de l'overlay</div>
               <div class="settingsGroupBody settingsGroupStrip">
-                <div class="settingsHint" data-i18n="mesures.aide">
-                  Cochez les mesures a afficher. Le bouton en bas de l'overlay passe de
-                  l'une a l'autre ; celles qui ne sont pas cochees sont sautees.
+                <div class="settingsRow settingsRowSelect">
+                  <div class="settingsInfo">
+                    <div class="settingsLabel" data-i18n="mesures.principale">Valeur principale</div>
+                  </div>
+                  <div class="settingsDropdownWrapper principaleDropdownWrapper">
+                    <button class="settingsDropdownBtn principaleDropdownBtn" type="button">
+                      <span class="settingsDropdownText">-</span>
+                      <span class="settingsDropdownCaret" aria-hidden="true">▾</span>
+                    </button>
+                    <div class="settingsDropdownMenu principaleDropdownMenu" role="menu"></div>
+                  </div>
                 </div>
-                <label class="settingsToggle">
-                  <span class="settingsToggleLabel settingsLabel" data-i18n="mesures.dps">DPS</span>
-                  <span class="settingsToggleControl">
-                    <input id="mesureDps" type="checkbox" data-mesure="dps" />
-                    <span class="settingsToggleTrack" aria-hidden="true"></span>
-                  </span>
-                </label>
-                <label class="settingsToggle">
-                  <span class="settingsToggleLabel settingsLabel" data-i18n="mesures.degats">Degats totaux</span>
-                  <span class="settingsToggleControl">
-                    <input id="mesureDegats" type="checkbox" data-mesure="totalDamage" />
-                    <span class="settingsToggleTrack" aria-hidden="true"></span>
-                  </span>
-                </label>
-                <label class="settingsToggle">
-                  <span class="settingsToggleLabel settingsLabel" data-i18n="mesures.part">Part des degats</span>
-                  <span class="settingsToggleControl">
-                    <input id="mesurePart" type="checkbox" data-mesure="contribution" />
-                    <span class="settingsToggleTrack" aria-hidden="true"></span>
-                  </span>
-                </label>
-                <label class="settingsToggle">
-                  <span class="settingsToggleLabel settingsLabel" data-i18n="mesures.soins">Soins</span>
-                  <span class="settingsToggleControl">
-                    <input id="mesureSoins" type="checkbox" data-mesure="heal" />
-                    <span class="settingsToggleTrack" aria-hidden="true"></span>
-                  </span>
-                </label>
+                <div class="settingsRow settingsRowSelect">
+                  <div class="settingsInfo">
+                    <div class="settingsLabel" data-i18n="mesures.secondaire">Valeur secondaire</div>
+                  </div>
+                  <div class="settingsDropdownWrapper secondaireDropdownWrapper">
+                    <button class="settingsDropdownBtn secondaireDropdownBtn" type="button">
+                      <span class="settingsDropdownText">-</span>
+                      <span class="settingsDropdownCaret" aria-hidden="true">▾</span>
+                    </button>
+                    <div class="settingsDropdownMenu secondaireDropdownMenu" role="menu"></div>
+                  </div>
+                </div>
+                <div class="settingsHint" data-i18n="mesures.aide">
+                  Les deux valeurs s'affichent en meme temps sur chaque ligne. Le bouton en
+                  bas de l'overlay fait defiler la valeur principale.
+                </div>
                 <div class="settingsHint" data-i18n="mesures.soinsAide">
                   Les soins comptent aussi les buffs : le jeu envoie les deux dans le meme
                   paquet entre allies, et rien ne permet de les separer pour l'instant.

@@ -49,8 +49,9 @@ class DpsApp {
       defaultMeterMode: "dpsMeter.defaultMeterMode",
       targetSelection: "dpsMeter.targetSelection",
       displayMode: "dpsMeter.displayMode",
-      // Ajout XIII NRV : les mesures que le bouton de l'overlay fait defiler.
-      mesuresOverlay: "dpsMeter.mesuresOverlay",
+      // Ajout XIII NRV : la seconde valeur affichee sur chaque ligne. La
+      // premiere reste `displayMode`, que le bouton de l'overlay fait defiler.
+      valeurSecondaire: "dpsMeter.valeurSecondaire",
       language: "dpsMeter.language",
       debugLogging: "dpsMeter.debugLoggingEnabled",
       pinMeToTop: "dpsMeter.pinMeToTop",
@@ -251,6 +252,12 @@ class DpsApp {
       dpsFormatter: this.dpsFormatter,
       getUserName: () => this.USER_NAME,
       getMetric: (row) => this.getMetricForRow(row),
+      // Ajout XIII NRV : la seconde zone de texte de la ligne, autrefois
+      // toujours la part des degats.
+      getMetricSecondaire: (row) => {
+        const mesure = this.valeurSecondaire();
+        return mesure ? this.getMetricForRow(row, mesure) : null;
+      },
       getSortDirection: () => this.listSortDirection,
       getPinUserToTop: () => this.pinMeToTop,
       getPlayerLimit: () => this.playerLimit,
@@ -503,12 +510,6 @@ class DpsApp {
 
     const storedDisplayMode = this.safeGetStorage(this.storageKeys.displayMode);
     this.setDisplayMode(storedDisplayMode || this.displayMode, { persist: false });
-    // Ajout XIII NRV : la mesure retenue la derniere fois a pu etre decochee
-    // depuis. On retombe alors sur la premiere mesure encore active.
-    const mesures = this.mesuresActives();
-    if (!mesures.includes(this.displayMode)) {
-      this.setDisplayMode(mesures[0], { persist: false });
-    }
 
     // History is a browser you leave open: picking a fight launches it into a
     // window of its own so several can be compared, and the list stays put.
@@ -1859,11 +1860,10 @@ class DpsApp {
       }
     });
     this.metricToggleBtn?.addEventListener("click", () => {
-      // Ajout XIII NRV : le bouton passe d'une mesure cochee a la suivante, au
-      // lieu de basculer entre deux mesures figees.
-      const actives = this.mesuresActives();
-      const position = actives.indexOf(this.displayMode);
-      const suivante = actives[(position + 1) % actives.length];
+      // Ajout XIII NRV : le bouton fait defiler les quatre mesures, au lieu de
+      // basculer entre deux.
+      const position = DpsApp.MESURES.indexOf(this.displayMode);
+      const suivante = DpsApp.MESURES[(position + 1) % DpsApp.MESURES.length];
       this.setDisplayMode(suivante, { persist: true });
       this.renderCurrentRows();
     });
@@ -2311,29 +2311,6 @@ class DpsApp {
     surClicOuEntree(document.querySelector(".reduireBtn"), () => fenetre()?.minimize?.());
     surClicOuEntree(document.querySelector(".fermerBtn"), () => fenetre()?.close?.());
 
-    // Ajout XIII NRV : les cases qui choisissent les mesures de l'overlay.
-    const cases = [...document.querySelectorAll("[data-mesure]")];
-    if (cases.length) {
-      const refletter = () => {
-        const actives = this.mesuresActives();
-        cases.forEach((c) => {
-          c.checked = actives.includes(c.dataset.mesure);
-        });
-      };
-      refletter();
-      cases.forEach((c) => {
-        c.addEventListener("change", () => {
-          const voulues = cases.filter((x) => x.checked).map((x) => x.dataset.mesure);
-          const retenues = this.enregistrerMesures(voulues);
-          // Decocher la derniere n'a pas d'effet : le bouton doit toujours avoir
-          // une mesure a montrer. On remet la case dans l'etat reellement retenu.
-          cases.forEach((x) => {
-            x.checked = retenues.includes(x.dataset.mesure);
-          });
-        });
-      });
-    }
-
     this.settingsClose?.addEventListener("click", () => this.closeSettingsPanel());
 
     const advancedToggle = document.querySelector(".settingsAdvancedToggle");
@@ -2677,6 +2654,32 @@ class DpsApp {
         label: this.i18n?.t("settings.trainingMode.options.highestDamage", "Highest Damage"),
       },
     ];
+
+    // Ajout XIII NRV : les deux valeurs affichees sur chaque ligne.
+    const nomMesure = (cle) =>
+      this.i18n?.t(`mesures.${cle}`, cle) ?? cle;
+    const mesuresOptions = DpsApp.MESURES.map((m) => ({ value: m, label: nomMesure(m) }));
+    setupDropdown(
+      document.querySelector(".principaleDropdownBtn"),
+      document.querySelector(".principaleDropdownMenu"),
+      mesuresOptions,
+      this.displayMode,
+      (value) => {
+        if (!value) return;
+        this.setDisplayMode(value, { persist: true });
+        this.renderCurrentRows();
+      }
+    );
+    setupDropdown(
+      document.querySelector(".secondaireDropdownBtn"),
+      document.querySelector(".secondaireDropdownMenu"),
+      [{ value: "aucune", label: nomMesure("aucune") }, ...mesuresOptions],
+      this.valeurSecondaire() || "aucune",
+      (value) => {
+        if (!value) return;
+        this.enregistrerValeurSecondaire(value);
+      }
+    );
 
     setupDropdown(
       this.languageDropdownBtn,
@@ -3844,31 +3847,19 @@ class DpsApp {
   // une reste toujours active, sinon le bouton n'aurait plus rien a montrer.
   static MESURES = ["dps", "totalDamage", "contribution", "heal"];
 
-  mesuresActives() {
-    const brut = this.safeGetSetting(this.storageKeys.mesuresOverlay);
-    let choisies = null;
-    try {
-      const lu = brut ? JSON.parse(brut) : null;
-      if (Array.isArray(lu)) choisies = lu;
-    } catch {
-      choisies = null;
-    }
-    const filtrees = (choisies || ["dps", "totalDamage"]).filter((m) =>
-      DpsApp.MESURES.includes(m),
-    );
-    return filtrees.length ? filtrees : ["dps"];
+  // La seconde valeur, celle de droite. « aucune » laisse la place vide.
+  valeurSecondaire() {
+    const lu = this.safeGetSetting(this.storageKeys.valeurSecondaire);
+    if (lu === "aucune") return null;
+    return DpsApp.MESURES.includes(lu) ? lu : "contribution";
   }
 
-  enregistrerMesures(mesures) {
-    const propres = DpsApp.MESURES.filter((m) => mesures.includes(m));
-    const finales = propres.length ? propres : ["dps"];
-    this.safeSetSetting(this.storageKeys.mesuresOverlay, JSON.stringify(finales));
-    if (!finales.includes(this.displayMode)) {
-      this.setDisplayMode(finales[0], { persist: true });
-    }
+  enregistrerValeurSecondaire(valeur) {
+    const propre = valeur === "aucune" || DpsApp.MESURES.includes(valeur) ? valeur : "contribution";
+    this.safeSetSetting(this.storageKeys.valeurSecondaire, propre);
     this.renderCurrentRows();
-    return finales;
   }
+
 
   updateDisplayToggleLabel() {
     if (!this.metricToggleBtn) return;
@@ -4046,14 +4037,7 @@ class DpsApp {
     // donc le mecanisme par selecteur ci-dessous ne convient pas. On applique
     // directement, sans rien reecrire : pas de reecriture, pas de rediffusion,
     // pas de boucle.
-    if (key === "dpsMeter.mesuresOverlay") {
-      const actives = this.mesuresActives();
-      document.querySelectorAll("[data-mesure]").forEach((c) => {
-        c.checked = actives.includes(c.dataset.mesure);
-      });
-      if (!actives.includes(this.displayMode)) {
-        this.setDisplayMode(actives[0], { persist: false });
-      }
+    if (key === "dpsMeter.valeurSecondaire") {
       this.renderCurrentRows();
       return;
     }
@@ -4080,18 +4064,20 @@ class DpsApp {
     }
   }
 
-  getMetricForRow(row) {
-    // Ajout XIII NRV : deux mesures de plus, la part des degats et les soins.
-    if (this.displayMode === "contribution") {
+  // Ajout XIII NRV : la mesure est un parametre. Elle etait lue dans l'etat de
+  // l'objet, ce qui obligeait a le modifier temporairement pour calculer la
+  // seconde valeur de la ligne.
+  getMetricForRow(row, mesure = this.displayMode) {
+    if (mesure === "contribution") {
       const part = Number(row?.damageContribution);
       const valeur = Number.isFinite(part) ? part : 0;
       return { value: valeur, text: `${valeur.toFixed(1)} %` };
     }
-    if (this.displayMode === "heal") {
+    if (mesure === "heal") {
       const soins = Number(row?.heal) || 0;
       return { value: soins, text: this.formatAbbreviatedNumber(soins) };
     }
-    if (this.displayMode === "totalDamage") {
+    if (mesure === "totalDamage") {
       const totalDamage = Number(row?.totalDamage) || 0;
       return {
         value: totalDamage,

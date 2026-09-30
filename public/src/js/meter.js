@@ -6,6 +6,7 @@ const createMeterUI = ({
   onHoverUserRow,
   onLeaveUserRow,
   getMetric,
+  getMetricSecondaire,
   getSortDirection,
   getPinUserToTop,
   getPlayerLimit,
@@ -352,7 +353,13 @@ const createMeterUI = ({
         view.lastMetricText = metricText;
       }
 
-      const contributionText = `${damageContribution.toFixed(1)}%`;
+      // Ajout XIII NRV : cette zone montrait toujours la part des degats. Elle
+      // montre maintenant la mesure choisie, ou rien si l'on n'en veut pas.
+      const secondaire =
+        typeof getMetricSecondaire === "function" ? getMetricSecondaire(row) : null;
+      const contributionText = secondaire
+        ? secondaire.text
+        : `${damageContribution.toFixed(1)}%`;
       if (view.lastContributionText !== contributionText) {
         view.dpsContribution.textContent = contributionText;
         view.lastContributionText = contributionText;
