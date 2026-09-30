@@ -18,6 +18,13 @@ pub struct PersonalData {
     /// Combat power from the party roster packet, or 0 when this player isn't in
     /// your party (the roster is the only source, so non-party players have none).
     pub combat_power: i64,
+    /// Ajout XIII NRV : soins prodigués aux alliés, pour la colonne « Soins » de
+    /// l'overlay. Le chiffre existait déjà mais n'allait que dans la fenêtre
+    /// Details. Attention : il mélange soins et buffs — le jeu envoie les deux
+    /// dans le même paquet entre alliés (voir `data_storage.rs`, « player-on-player
+    /// damage is actually healing/buffs »), et rien ne permet aujourd'hui de les
+    /// séparer.
+    pub heal: i64,
 }
 
 impl PersonalData {
@@ -30,6 +37,7 @@ impl PersonalData {
             analyzed_data: HashMap::new(),
             nickname,
             combat_power: 0,
+            heal: 0,
         }
     }
 
@@ -42,6 +50,7 @@ impl PersonalData {
             analyzed_data: HashMap::new(),
             nickname,
             combat_power: 0,
+            heal: 0,
         }
     }
 

@@ -11,34 +11,19 @@
       rel="stylesheet"
       type="text/css" />
     <!--
-      CJK webfonts, loaded without blocking first paint. Every window pulls the
-      whole head before it renders, so as plain stylesheets these four put
-      unpkg.com on the critical path of opening Settings, Details or History —
-      measured at ~770ms each on a cold cache, and unbounded when offline. The
-      media="print" swap lets the browser fetch them at low priority and apply
-      them when they land; Latin text renders immediately in the fallback stack
-      and CJK text reflows once, rather than everything waiting on the network.
+      Ajout XIII NRV : les quatre polices CJK chargées depuis unpkg.com ont été
+      retirées. Elles mettaient un service tiers sur le chemin de chaque
+      ouverture de fenêtre — ce qui renseigne ce service sur l'usage que nos
+      membres font du meter, et le rend capable de servir une feuille de style
+      modifiée. Pour un programme qu'on demande d'exécuter en administrateur,
+      c'est une surface qu'on ne garde pas sans raison.
+
+      Windows fournit ses propres polices CJK (Malgun Gothic, Microsoft YaHei,
+      Microsoft JhengHei) : les noms coréens et chinois restent lisibles, avec un
+      dessin un peu différent. Si l'on veut retrouver exactement la typographie
+      d'origine, il faudra embarquer ces polices dans l'installeur plutôt que de
+      les récupérer sur un CDN — elles sont sous licence libre (SIL OFL).
     -->
-    <link
-      rel="stylesheet"
-      media="print"
-      onload="this.media='all'"
-      href="https://unpkg.com/spoqa-han-sans@3.3.0/css/SpoqaHanSansNeo.min.css" />
-    <link
-      rel="stylesheet"
-      media="print"
-      onload="this.media='all'"
-      href="https://unpkg.com/pretendard@1.3.9/dist/web/variable/pretendardvariable.css" />
-    <link
-      rel="stylesheet"
-      media="print"
-      onload="this.media='all'"
-      href="https://unpkg.com/@fontsource/noto-sans-sc@5.0.19/index.css" />
-    <link
-      rel="stylesheet"
-      media="print"
-      onload="this.media='all'"
-      href="https://unpkg.com/@fontsource/noto-sans-tc@5.0.19/index.css" />
     <!--
       Vendored, and pinned. This is a render-blocking script that every icon in
       the UI waits on, so fetching it from a CDN meant no icons until the
@@ -400,6 +385,50 @@
             <button class="closeX settingsClose" type="button" aria-label="Close">×</button>
           </div>
           <div class="settingsBody">
+            <!-- Ajout XIII NRV : chacun choisit ce que le bouton de l'overlay fait
+                 defiler. L'overlay fait trente pixels de haut : il montre une
+                 mesure a la fois, et le bouton passe de l'une a l'autre. -->
+            <section class="settingsGroup mesuresGroup">
+              <div class="settingsMiniTitle" data-i18n="mesures.titre">Affichage de l'overlay</div>
+              <div class="settingsGroupBody settingsGroupStrip">
+                <div class="settingsHint" data-i18n="mesures.aide">
+                  Cochez les mesures a afficher. Le bouton en bas de l'overlay passe de
+                  l'une a l'autre ; celles qui ne sont pas cochees sont sautees.
+                </div>
+                <label class="settingsToggle">
+                  <span class="settingsToggleLabel settingsLabel" data-i18n="mesures.dps">DPS</span>
+                  <span class="settingsToggleControl">
+                    <input id="mesureDps" type="checkbox" data-mesure="dps" />
+                    <span class="settingsToggleTrack" aria-hidden="true"></span>
+                  </span>
+                </label>
+                <label class="settingsToggle">
+                  <span class="settingsToggleLabel settingsLabel" data-i18n="mesures.degats">Degats totaux</span>
+                  <span class="settingsToggleControl">
+                    <input id="mesureDegats" type="checkbox" data-mesure="totalDamage" />
+                    <span class="settingsToggleTrack" aria-hidden="true"></span>
+                  </span>
+                </label>
+                <label class="settingsToggle">
+                  <span class="settingsToggleLabel settingsLabel" data-i18n="mesures.part">Part des degats</span>
+                  <span class="settingsToggleControl">
+                    <input id="mesurePart" type="checkbox" data-mesure="contribution" />
+                    <span class="settingsToggleTrack" aria-hidden="true"></span>
+                  </span>
+                </label>
+                <label class="settingsToggle">
+                  <span class="settingsToggleLabel settingsLabel" data-i18n="mesures.soins">Soins</span>
+                  <span class="settingsToggleControl">
+                    <input id="mesureSoins" type="checkbox" data-mesure="heal" />
+                    <span class="settingsToggleTrack" aria-hidden="true"></span>
+                  </span>
+                </label>
+                <div class="settingsHint" data-i18n="mesures.soinsAide">
+                  Les soins comptent aussi les buffs : le jeu envoie les deux dans le meme
+                  paquet entre allies, et rien ne permet de les separer pour l'instant.
+                </div>
+              </div>
+            </section>
             <section class="settingsGroup xiiinrvGroup">
               <div class="settingsMiniTitle" data-i18n="xiiinrv.title">Guilde XIII NRV</div>
               <div class="settingsGroupBody settingsGroupStrip">

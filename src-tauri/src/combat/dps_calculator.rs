@@ -360,6 +360,15 @@ impl DpsCalculator {
         // Filter and compute DPS
         let local_ids = self.resolve_local_ids(&summon_data);
         let party_members = self.data_storage.get_party_members();
+        // Ajout XIII NRV : les soins par acteur, pour la colonne de l'overlay.
+        // Ils sont répartis par cible : on les additionne une fois pour toutes
+        // plutôt qu'une fois par joueur.
+        let mut soins: std::collections::HashMap<i32, i64> = std::collections::HashMap::new();
+        for cible in self.data_storage.get_combat_snapshot_light().values() {
+            for (acteur, donnees) in &cible.actors {
+                *soins.entry(*acteur).or_insert(0) += donnees.party_heal;
+            }
+        }
         let bt = battle_time.max(1000);
         let mut to_remove = Vec::new();
         for (&uid, data) in &mut dps_data.map {
@@ -369,6 +378,7 @@ impl DpsCalculator {
                 .get(&data.nickname)
                 .map(|m| m.combat_power)
                 .unwrap_or(0);
+            data.heal = soins.get(&uid).copied().unwrap_or(0);
             if data.job.is_empty() {
                 if local_ids.as_ref().is_some_and(|ids| ids.contains(&uid)) {
                     data.job = "Unknown".to_string();

@@ -5,7 +5,11 @@
       "dps": "DPS",
       "total": "DGT",
       "ariaDps": "Affiche les DPS",
-      "ariaDamage": "Affiche les dégâts totaux"
+      "ariaDamage": "Affiche les dégâts totaux",
+      "part": "%",
+      "heal": "SOINS",
+      "ariaPart": "Affiche la part des dégâts",
+      "ariaHeal": "Affiche les soins"
     },
     "reduire": "Réduire",
     "fermer": "Fermer"
@@ -352,5 +356,14 @@
     "tokenPlaceholder": "collez ici le jeton donné par le site",
     "unavailable": "État indisponible",
     "waiting": "En attente : entrez en jeu, le meter lira la fiche de votre personnage."
+  },
+  "mesures": {
+    "titre": "Affichage de l'overlay",
+    "aide": "Cochez les mesures à afficher. Le bouton en bas de l'overlay passe de l'une à l'autre ; celles qui ne sont pas cochées sont sautées.",
+    "dps": "DPS",
+    "degats": "Dégâts totaux",
+    "part": "Part des dégâts",
+    "soins": "Soins",
+    "soinsAide": "Les soins comptent aussi les buffs : le jeu envoie les deux dans le même paquet entre alliés, et rien ne permet de les séparer pour l'instant."
   }
 }

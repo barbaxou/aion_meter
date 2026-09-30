@@ -49,6 +49,8 @@ class DpsApp {
       defaultMeterMode: "dpsMeter.defaultMeterMode",
       targetSelection: "dpsMeter.targetSelection",
       displayMode: "dpsMeter.displayMode",
+      // Ajout XIII NRV : les mesures que le bouton de l'overlay fait defiler.
+      mesuresOverlay: "dpsMeter.mesuresOverlay",
       language: "dpsMeter.language",
       debugLogging: "dpsMeter.debugLoggingEnabled",
       pinMeToTop: "dpsMeter.pinMeToTop",
@@ -489,12 +491,24 @@ class DpsApp {
       this.updateSupportPrimaryAction(lang);
       this.updateSupportQrImage(this.supportPrimaryButton?.dataset.support || "afdian");
     });
-    window.ReleaseChecker?.start?.();
+    // Ajout XIII NRV : la vérification de mise à jour d'A2Tools est coupée.
+    // Elle récupérait sur a2tools.app une adresse de MSI, le téléchargeait et
+    // l'installait avec msiexec /passive — sans signature, sans empreinte, sans
+    // restriction de domaine. Qui contrôle ce serveur aurait pu installer
+    // n'importe quoi chez chaque membre. Nos mises à jour se font en
+    // distribuant nous-mêmes une nouvelle version.
+    // window.ReleaseChecker?.start?.();
     this.setupConsoleDebugging();
     this.bindNativeHotkeyBridge();
 
     const storedDisplayMode = this.safeGetStorage(this.storageKeys.displayMode);
     this.setDisplayMode(storedDisplayMode || this.displayMode, { persist: false });
+    // Ajout XIII NRV : la mesure retenue la derniere fois a pu etre decochee
+    // depuis. On retombe alors sur la premiere mesure encore active.
+    const mesures = this.mesuresActives();
+    if (!mesures.includes(this.displayMode)) {
+      this.setDisplayMode(mesures[0], { persist: false });
+    }
 
     // History is a browser you leave open: picking a fight launches it into a
     // window of its own so several can be compared, and the list stays put.
@@ -1144,6 +1158,10 @@ class DpsApp {
       // players actually in your party; 0 means "unknown", not "zero CP".
       const combatPower = Math.trunc(Number(isObj ? value.combatPower : 0)) || 0;
 
+      // Ajout XIII NRV : soins prodigues aux allies. Le chiffre melange soins et
+      // buffs, le jeu envoyant les deux dans le meme paquet entre allies.
+      const heal = Math.trunc(Number(isObj ? value.heal : 0)) || 0;
+
       rows.push({
         id: String(id),
         name,
@@ -1151,6 +1169,7 @@ class DpsApp {
         dps,
         totalDamage,
         damageContribution,
+        heal,
         combatPower,
         isUser: name === this.USER_NAME,
         isIdentifying,
@@ -1840,8 +1859,12 @@ class DpsApp {
       }
     });
     this.metricToggleBtn?.addEventListener("click", () => {
-      const nextMode = this.displayMode === "totalDamage" ? "dps" : "totalDamage";
-      this.setDisplayMode(nextMode, { persist: true });
+      // Ajout XIII NRV : le bouton passe d'une mesure cochee a la suivante, au
+      // lieu de basculer entre deux mesures figees.
+      const actives = this.mesuresActives();
+      const position = actives.indexOf(this.displayMode);
+      const suivante = actives[(position + 1) % actives.length];
+      this.setDisplayMode(suivante, { persist: true });
       this.renderCurrentRows();
     });
     this.logoBtn?.addEventListener("click", () => {
@@ -2287,6 +2310,29 @@ class DpsApp {
     };
     surClicOuEntree(document.querySelector(".reduireBtn"), () => fenetre()?.minimize?.());
     surClicOuEntree(document.querySelector(".fermerBtn"), () => fenetre()?.close?.());
+
+    // Ajout XIII NRV : les cases qui choisissent les mesures de l'overlay.
+    const cases = [...document.querySelectorAll("[data-mesure]")];
+    if (cases.length) {
+      const refletter = () => {
+        const actives = this.mesuresActives();
+        cases.forEach((c) => {
+          c.checked = actives.includes(c.dataset.mesure);
+        });
+      };
+      refletter();
+      cases.forEach((c) => {
+        c.addEventListener("change", () => {
+          const voulues = cases.filter((x) => x.checked).map((x) => x.dataset.mesure);
+          const retenues = this.enregistrerMesures(voulues);
+          // Decocher la derniere n'a pas d'effet : le bouton doit toujours avoir
+          // une mesure a montrer. On remet la case dans l'etat reellement retenu.
+          cases.forEach((x) => {
+            x.checked = retenues.includes(x.dataset.mesure);
+          });
+        });
+      });
+    }
 
     this.settingsClose?.addEventListener("click", () => this.closeSettingsPanel());
 
@@ -3785,23 +3831,64 @@ class DpsApp {
   }
 
   setDisplayMode(mode, { persist = false } = {}) {
-    this.displayMode = mode === "totalDamage" ? "totalDamage" : "dps";
+    // Ajout XIII NRV : quatre mesures possibles. Cette ligne n'en connaissait que
+    // deux et ramenait silencieusement les autres a « dps ».
+    this.displayMode = DpsApp.MESURES.includes(mode) ? mode : "dps";
     if (persist) {
       this.safeSetStorage(this.storageKeys.displayMode, this.displayMode);
     }
     this.updateDisplayToggleLabel();
   }
 
+  // Ajout XIII NRV : les mesures cochees, dans l'ordre d'affichage. Au moins
+  // une reste toujours active, sinon le bouton n'aurait plus rien a montrer.
+  static MESURES = ["dps", "totalDamage", "contribution", "heal"];
+
+  mesuresActives() {
+    const brut = this.safeGetSetting(this.storageKeys.mesuresOverlay);
+    let choisies = null;
+    try {
+      const lu = brut ? JSON.parse(brut) : null;
+      if (Array.isArray(lu)) choisies = lu;
+    } catch {
+      choisies = null;
+    }
+    const filtrees = (choisies || ["dps", "totalDamage"]).filter((m) =>
+      DpsApp.MESURES.includes(m),
+    );
+    return filtrees.length ? filtrees : ["dps"];
+  }
+
+  enregistrerMesures(mesures) {
+    const propres = DpsApp.MESURES.filter((m) => mesures.includes(m));
+    const finales = propres.length ? propres : ["dps"];
+    this.safeSetSetting(this.storageKeys.mesuresOverlay, JSON.stringify(finales));
+    if (!finales.includes(this.displayMode)) {
+      this.setDisplayMode(finales[0], { persist: true });
+    }
+    this.renderCurrentRows();
+    return finales;
+  }
+
   updateDisplayToggleLabel() {
     if (!this.metricToggleBtn) return;
-    const label =
-      this.displayMode === "totalDamage"
-        ? this.i18n?.t("header.display.total", "DMG") ?? "DMG"
-        : this.i18n?.t("header.display.dps", "DPS") ?? "DPS";
-    const ariaLabel =
-      this.displayMode === "totalDamage"
-        ? this.i18n?.t("header.display.ariaDamage", "Showing total damage")
-        : this.i18n?.t("header.display.ariaDps", "Showing DPS");
+    // Ajout XIII NRV : quatre mesures possibles au lieu de deux.
+    const libelles = {
+      dps: ["header.display.dps", "DPS"],
+      totalDamage: ["header.display.total", "DMG"],
+      contribution: ["header.display.part", "%"],
+      heal: ["header.display.heal", "SOINS"],
+    };
+    const arias = {
+      dps: ["header.display.ariaDps", "Showing DPS"],
+      totalDamage: ["header.display.ariaDamage", "Showing total damage"],
+      contribution: ["header.display.ariaPart", "Showing damage share"],
+      heal: ["header.display.ariaHeal", "Showing healing"],
+    };
+    const [cleLabel, defautLabel] = libelles[this.displayMode] || libelles.dps;
+    const [cleAria, defautAria] = arias[this.displayMode] || arias.dps;
+    const label = this.i18n?.t(cleLabel, defautLabel) ?? defautLabel;
+    const ariaLabel = this.i18n?.t(cleAria, defautAria) ?? defautAria;
     this.metricToggleBtn.textContent = label;
     this.metricToggleBtn.setAttribute("aria-label", ariaLabel);
   }
@@ -3955,6 +4042,22 @@ class DpsApp {
       return;
     }
 
+    // Ajout XIII NRV : les mesures de l'overlay. Une seule cle pour quatre cases,
+    // donc le mecanisme par selecteur ci-dessous ne convient pas. On applique
+    // directement, sans rien reecrire : pas de reecriture, pas de rediffusion,
+    // pas de boucle.
+    if (key === "dpsMeter.mesuresOverlay") {
+      const actives = this.mesuresActives();
+      document.querySelectorAll("[data-mesure]").forEach((c) => {
+        c.checked = actives.includes(c.dataset.mesure);
+      });
+      if (!actives.includes(this.displayMode)) {
+        this.setDisplayMode(actives[0], { persist: false });
+      }
+      this.renderCurrentRows();
+      return;
+    }
+
     const selector = REMOTE_APPLIED_SETTING_CONTROLS[key];
     if (!selector) return;
     const control = document.querySelector(selector);
@@ -3978,6 +4081,16 @@ class DpsApp {
   }
 
   getMetricForRow(row) {
+    // Ajout XIII NRV : deux mesures de plus, la part des degats et les soins.
+    if (this.displayMode === "contribution") {
+      const part = Number(row?.damageContribution);
+      const valeur = Number.isFinite(part) ? part : 0;
+      return { value: valeur, text: `${valeur.toFixed(1)} %` };
+    }
+    if (this.displayMode === "heal") {
+      const soins = Number(row?.heal) || 0;
+      return { value: soins, text: this.formatAbbreviatedNumber(soins) };
+    }
     if (this.displayMode === "totalDamage") {
       const totalDamage = Number(row?.totalDamage) || 0;
       return {
