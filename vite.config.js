@@ -34,9 +34,9 @@ function embarquerLesDonnees() {
 
       let fichiers = 0;
       let octets = 0;
-      const copier = (relatif) => {
-        const de = join(source, relatif);
-        const vers = join(cible, relatif);
+      const copier = (relatif, racine = source, destination = cible) => {
+        const de = join(racine, relatif);
+        const vers = join(destination, relatif);
         mkdirSync(dirname(vers), { recursive: true });
         cpSync(de, vers);
         fichiers += 1;
@@ -58,12 +58,43 @@ function embarquerLesDonnees() {
         }
       }
 
+      // Les images de l'interface — icônes de classe, logo, liens. Même défaut
+      // que les traductions, découvert de la même façon : barbaxou a vu les
+      // icônes de classe manquer dans l'overlay après installation, alors qu'en
+      // développement le serveur de Vite les servait depuis le dossier du
+      // projet. `meter.js` les cherche d'abord sous `assets/`, puis sous
+      // `src/assets/` ; on remplit les deux, cela pèse 145 Ko.
+      const images = 'src/assets';
+      if (existsSync(images)) {
+        for (const nom of readdirSync(images)) {
+          if (!statSync(join(images, nom)).isFile()) continue;
+          copier(nom, images, 'dist/assets');
+          copier(nom, images, 'dist/src/assets');
+        }
+      } else {
+        this.warn(`XIII NRV : ${images} est introuvable, aucune image embarquée`);
+      }
+
       // Sans les textes de l'interface, l'application s'affiche entièrement en
       // anglais sans rien signaler. Mieux vaut que la construction échoue.
       for (const langue of LANGUES) {
         const attendu = join(cible, "i18n", "ui", `${langue}.json`);
         if (!existsSync(attendu)) {
           this.error(`XIII NRV : ${attendu} manque — l'application serait en anglais`);
+        }
+      }
+
+      // Et sans les icônes de classe, l'overlay affiche une image cassée à côté
+      // de chaque joueur. Même raisonnement : la construction doit échouer.
+      const classes = existsSync(images)
+        ? readdirSync(images).filter((n) => n.endsWith('.png'))
+        : [];
+      if (!classes.length) {
+        this.error("XIII NRV : aucune image de classe embarquée — l'overlay serait sans icônes");
+      }
+      for (const nom of classes) {
+        if (!existsSync(join('dist/assets', nom))) {
+          this.error(`XIII NRV : l'image ${nom} n'a pas été embarquée`);
         }
       }
 

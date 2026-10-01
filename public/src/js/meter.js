@@ -283,14 +283,11 @@ const createMeterUI = ({
       // players quote it — 889,100 reads as "889k", 889,545 as "890k". The
       // exact figure stays on the row for the details panel. Below 500 the
       // abbreviation would collapse to "0k", so show the raw number there.
-      const combatPower = Number(row.combatPower) || 0;
-      const combatPowerK = Math.round(combatPower / 1000);
-      const combatPowerText =
-        combatPower <= 0
-          ? ""
-          : combatPowerK > 0
-            ? `${combatPowerK.toLocaleString()}k`
-            : combatPower.toLocaleString();
+      // Ajout XIII NRV : le Combat Power ne s'affiche plus a cote du nom pendant
+      // le combat. barbaxou l'a demande : la ligne fait trente pixels, et ce
+      // chiffre ne change pas d'un combat a l'autre — il encombrait sans
+      // informer. Il reste lu et envoye au site, ou il a sa place.
+      const combatPowerText = "";
       if (view.lastCombatPowerText !== combatPowerText) {
         view.combatPowerEl.textContent = combatPowerText;
         view.combatPowerEl.style.display = combatPowerText ? "" : "none";
