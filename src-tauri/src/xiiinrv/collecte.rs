@@ -179,6 +179,81 @@ pub fn nom_detecte(nom: Option<String>) {
     *nom_detecte_stock().lock() = nom;
 }
 
+/// Le stockage d'A2Tools, pour y lire la composition du groupe.
+///
+/// Notre lecture des paquets reste la nôtre — c'est leur réassemblage qui
+/// perdait des paquets, pas leurs décodeurs. Celui de la composition du groupe
+/// fait une centaine de lignes avec des ancrages délicats (la distance entre
+/// l'Item Level et le Combat Power n'y est pas fixe) : le réécrire serait
+/// fragile pour rien. On réutilise son résultat, et s'il manque on ne rafraîchit
+/// simplement pas.
+static GROUPE: OnceLock<std::sync::Arc<crate::combat::data_storage::DataStorage>> =
+    OnceLock::new();
+
+pub fn brancher_le_groupe(stockage: std::sync::Arc<crate::combat::data_storage::DataStorage>) {
+    let _ = GROUPE.set(stockage);
+}
+
+/// Reprend l'Item Level et le Combat Power dans la ligne du membre lui-même.
+///
+/// L'inventaire et le défilement du Combat Power n'arrivent qu'à l'entrée en
+/// jeu : sans cela, une fiche reste celle du moment où le membre est entré, et
+/// un changement d'équipement en cours de soirée ne se voit pas. La composition
+/// du groupe, elle, passe environ toutes les vingt secondes — 1 703 fois sur la
+/// session de dix heures du 30/09/2026.
+///
+/// **On n'y prend que la ligne du membre.** Les autres joueurs y figurent aussi,
+/// et on n'y touche pas : tout le dispositif repose sur le fait que chacun
+/// partage sa propre fiche, et la notice remise aux membres le dit.
+pub fn rafraichir_depuis_le_groupe() {
+    let Some(stockage) = GROUPE.get() else {
+        return;
+    };
+    if !lecture_ouverte() {
+        return;
+    }
+    let nom = {
+        let e = etat().lock();
+        match e.nom.clone() {
+            Some(n) => n,
+            None => nom_detecte_stock().lock().clone().unwrap_or_default(),
+        }
+    };
+    if nom.is_empty() {
+        return;
+    }
+    let membres = stockage.get_party_members();
+    let Some(moi) = membres.get(&nom) else {
+        return; // hors groupe, ou nom pas encore connu
+    };
+
+    let mut e = etat().lock();
+    let mut change = false;
+    if moi.gear_score > 0 && e.item_level != Some(moi.gear_score as u32) {
+        e.item_level = Some(moi.gear_score as u32);
+        change = true;
+    }
+    if moi.combat_power > 0 && e.combat_power != Some(moi.combat_power as u32) {
+        e.combat_power = Some(moi.combat_power as u32);
+        // Cette valeur est structurée et nommée : elle vaut mieux qu'un
+        // défilement, donc elle compte comme corroborée.
+        e.cp_paquets = 2;
+        e.cp_en_attente = Some(moi.combat_power as u32);
+        e.cp_vu_le = Some(std::time::Instant::now());
+        change = true;
+    }
+    if moi.level > 0 && e.niveau != Some(moi.level as u32) {
+        e.niveau = Some(moi.level as u32);
+        change = true;
+    }
+    if change {
+        info!(
+            "XIII NRV : fiche rafraîchie depuis le groupe (niveau {:?}, Item Level {:?}, Combat Power {:?})",
+            e.niveau, e.item_level, e.combat_power
+        );
+    }
+}
+
 static ETAT: OnceLock<Mutex<Etat>> = OnceLock::new();
 
 fn etat() -> &'static Mutex<Etat> {

@@ -1383,6 +1383,9 @@ pub fn run() {
                 settings_pour_xiiinrv.1,
                 settings_pour_xiiinrv.2,
             );
+            // Ajout XIII NRV : accès à la composition du groupe, pour rafraîchir
+            // l'Item Level et le Combat Power sans attendre une entrée en jeu.
+            crate::xiiinrv::collecte::brancher_le_groupe(data_storage.clone());
             crate::xiiinrv::demarrer();
 
             // Le nom détecté par A2Tools sert de filet quand la fiche de

@@ -214,6 +214,14 @@ pub fn demarrer() {
                 continue;
             };
 
+            // Ajout XIII NRV : avant de regarder s'il y a lieu d'envoyer, on
+            // reprend l'Item Level et le Combat Power dans la composition du
+            // groupe. L'inventaire et le défilement du Combat Power n'arrivent
+            // qu'à l'entrée en jeu ; sans cela, une fiche reste celle du moment
+            // où le membre est entré, et un changement d'équipement en cours de
+            // soirée ne se voit jamais.
+            super::collecte::rafraichir_depuis_le_groupe();
+
             let etat = lire_etat();
             if !etat.pret() {
                 continue;
