@@ -31,6 +31,27 @@
     `</svg>`
   );
 
+  // Ajout XIII NRV : les consommables. Le jeu les fait passer par le meme canal
+  // que les competences, mais leur code ne designe aucune classe — voir plus bas.
+  const POTION_ICON = "data:image/svg+xml," + encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#7ad4a0" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">` +
+    `<path d="M10 2v7.31"/><path d="M14 9.3V1.99"/><path d="M8.5 2h7"/>` +
+    `<path d="M14 9.3a6.5 6.5 0 1 1-4 0"/><path d="M5.52 16h12.96"/>` +
+    `</svg>`
+  );
+
+  const PARCHEMIN_ICON = "data:image/svg+xml," + encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#d8c08a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">` +
+    `<path d="M15 12h-5"/><path d="M15 8h-5"/>` +
+    `<path d="M19 17V5a2 2 0 0 0-2-2H4"/>` +
+    `<path d="M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3"/>` +
+    `</svg>`
+  );
+
+  // Les familles de consommables observées. Le préfixe est celui du code tel
+  // qu'il circule, avant tout complément.
+  const CONSOMMABLES = { "20": POTION_ICON, "22": PARCHEMIN_ICON };
+
   // Lookup table: first 4 digits of 8-digit skill code -> icon filename (from game data)
   let SKILL_ICON_MAP = null;
 
@@ -164,6 +185,21 @@
     const iconName = getSkillIconMap()[base4];
     if (iconName) {
       return [`${BASE_URL}/${iconName}.png`, WAND_ICON];
+    }
+
+    // Ajout XIII NRV : avant de tomber dans le calcul de secours, écarter ce qui
+    // n'est pas une compétence de classe.
+    //
+    // Le calcul ci-dessous déduit la classe du **joueur** quand le code ne la
+    // donne pas, et fabrique `ICON_<classe>_SKILL_<sous-code>.png`. Pour une
+    // potion ou un parchemin, cela produisait une icône de compétence sans le
+    // moindre rapport — et différente selon qui s'en servait : sur la session du
+    // 30/09/2026, la même « Potion de PV » est apparue sous huit icônes, une par
+    // classe présente. 222 lignes de combat sur 2 903 passaient par là, toutes
+    // des consommables.
+    const famille = code.slice(0, 2);
+    if (!classCodeByPrefix[famille]) {
+      return [CONSOMMABLES[famille] || WAND_ICON];
     }
 
     // Fallback: algorithmic approach for skills not in the table

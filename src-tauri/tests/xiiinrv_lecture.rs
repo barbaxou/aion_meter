@@ -472,6 +472,67 @@ fn changer_de_personnage_ne_melange_pas_deux_fiches() {
     );
 }
 
+/// Un Combat Power isolé ne doit pas s'imposer.
+///
+/// À l'entrée en jeu le compteur défile : trois paquets en moins d'une seconde.
+/// Sur la session de dix heures du 30/09/2026, un unique paquet `56 36` est
+/// apparu, isolé et parfaitement conforme — les neuf octets nuls de la mise en
+/// forme y étaient — annonçant 3 732 pour un personnage qui en affiche 132 000.
+/// Le découpage s'était perdu : le garde-fou s'était déclenché plus de deux cents
+/// fois sur la session, des paquets ayant été perdus à la capture. Un contrôle de
+/// structure ne l'aurait pas écarté ; seule la corroboration le fait.
+#[test]
+fn un_combat_power_isole_ne_simpose_pas() {
+    let _garde = VERROU.lock().unwrap_or_else(|e| e.into_inner());
+
+    // Les octets réels, relevés dans les deux enregistrements.
+    let defilement: [&[u8]; 3] = [
+        &[0x16, 0x56, 0x36, 0x5c, 0x2d, 0x01, 0, 0, 0, 0, 0, 0xac, 0x06, 0x02, 0, 0, 0, 0, 0],
+        &[0x16, 0x56, 0x36, 0x22, 0xb3, 0x01, 0, 0, 0, 0, 0, 0xac, 0x06, 0x02, 0, 0, 0, 0, 0],
+        &[0x16, 0x56, 0x36, 0x6e, 0x05, 0x02, 0, 0, 0, 0, 0, 0xac, 0x06, 0x02, 0, 0, 0, 0, 0],
+    ];
+    let isole: &[u8] = &[
+        0x16, 0x56, 0x36, 0x94, 0x0e, 0, 0, 0, 0, 0, 0, 0x94, 0x0e, 0, 0, 0, 0, 0, 0,
+    ];
+
+    // Le défilement complet : la plus grande valeur est retenue.
+    collecte::vider();
+    collecte::ouvrir_lecture(true);
+    for p in defilement {
+        collecte::observer(p);
+    }
+    assert_eq!(
+        collecte::lire_etat().combat_power,
+        Some(132_462),
+        "le défilement de trois paquets doit donner sa plus grande valeur"
+    );
+
+    // Le paquet isolé, seul : rien ne doit être retenu.
+    collecte::vider();
+    collecte::observer(isole);
+    assert_eq!(
+        collecte::lire_etat().combat_power,
+        None,
+        "un paquet isolé ne suffit pas, même parfaitement conforme"
+    );
+
+    // Et il ne doit pas écraser un Combat Power déjà établi.
+    collecte::vider();
+    for p in defilement {
+        collecte::observer(p);
+    }
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    collecte::observer(isole);
+    assert_eq!(
+        collecte::lire_etat().combat_power,
+        Some(132_462),
+        "un paquet isolé ne doit pas remplacer un Combat Power corroboré"
+    );
+
+    collecte::ouvrir_lecture(false);
+    collecte::vider();
+}
+
 fn hex_vers_octets(hexa: &str) -> Option<Vec<u8>> {
     // Le journal commence par une marque d'ordre des octets : on écarte toute
     // ligne qui n'est pas strictement de l'hexadécimal.

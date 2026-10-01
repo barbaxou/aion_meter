@@ -5736,7 +5736,7 @@ dependencies = [
 
 [[package]]
 name = "xiiinrv-meter"
-version = "2.0.26"
+version = "2.0.27"
 dependencies = [
  "chrono",
  "futures-util",

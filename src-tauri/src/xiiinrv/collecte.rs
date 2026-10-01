@@ -61,6 +61,12 @@ pub struct Etat {
     /// Quand la dernière valeur de Combat Power est arrivée : sert à distinguer
     /// le défilement de l'entrée en jeu d'un vrai changement.
     pub cp_vu_le: Option<std::time::Instant>,
+    /// Combien de paquets de Combat Power composent le défilement en cours.
+    /// Un défilement authentique en compte trois ; un paquet isolé est suspect.
+    pub cp_paquets: u8,
+    /// La plus grande valeur du défilement en cours, retenue tant qu'elle n'est
+    /// pas corroborée par un second paquet.
+    pub cp_en_attente: Option<u32>,
     pub equipement: Vec<Piece>,
     pub pets: Vec<Genus>,
     /// Quand l'équipement et les pets ont été lus. À l'entrée en jeu ils
@@ -111,6 +117,8 @@ impl Etat {
         if !meme_entree(self.cp_vu_le) {
             self.combat_power = None;
             self.cp_vu_le = None;
+            self.cp_paquets = 0;
+            self.cp_en_attente = None;
         }
         // Les PV et PM arrivent dans la fiche elle-même, mais pas dans toutes :
         // la version imbriquée de l'entrée en jeu ne les porte pas, d'où le
@@ -465,6 +473,13 @@ fn lire_combat_power(packet: &[u8]) {
     if packet.len() != 19 {
         return;
     }
+    // Les neuf octets nuls de la mise en forme. Un vrai paquet les porte tous :
+    //   16 56 36 <valeur u32> 00*4 <second champ u32> 00*4
+    // Cela ne suffit pas à écarter un paquet fabriqué par une désynchronisation
+    // — celui observé le 30/09 les avait tous — mais écarte les coïncidences.
+    if packet[7..11].iter().any(|&o| o != 0) || packet[15..19].iter().any(|&o| o != 0) {
+        return;
+    }
     let Some(valeur) = u32_le(packet, 3) else {
         return;
     };
@@ -476,13 +491,35 @@ fn lire_combat_power(packet: &[u8]) {
     let mut e = etat().lock();
     let meme_defilement = e
         .cp_vu_le
-        .map(|t| maintenant.duration_since(t).as_secs() < 5)
-        .unwrap_or(false);
-    e.combat_power = Some(match (e.combat_power, meme_defilement) {
-        (Some(ancien), true) => ancien.max(valeur),
-        _ => valeur,
-    });
+        .is_some_and(|t| maintenant.duration_since(t).as_secs() < 5);
+
+    if meme_defilement {
+        e.cp_paquets = e.cp_paquets.saturating_add(1);
+        e.cp_en_attente = Some(e.cp_en_attente.unwrap_or(0).max(valeur));
+    } else {
+        e.cp_paquets = 1;
+        e.cp_en_attente = Some(valeur);
+    }
     e.cp_vu_le = Some(maintenant);
+
+    // Un paquet isolé ne s'impose pas.
+    //
+    // À l'entrée en jeu, le compteur défile : trois paquets en moins d'une
+    // seconde (77 148 → 111 394 → 132 462). Sur la session de dix heures du
+    // 30/09/2026, un unique paquet `56 36` est apparu, isolé, parfaitement
+    // conforme — neuf octets nuls compris — et annonçait 3 732 pour un
+    // personnage qui en affiche 132 000. Le découpage s'était perdu : sur dix
+    // heures le garde-fou s'est déclenché plus de deux cents fois, des paquets
+    // ayant été perdus à la capture. Accepter ce chiffre l'aurait publié sur le
+    // site à la place du vrai.
+    //
+    // On attend donc une corroboration : deux paquets au moins dans la même
+    // fenêtre. Mieux vaut un Combat Power un peu ancien qu'un Combat Power faux.
+    if e.cp_paquets >= 2 {
+        if let Some(retenue) = e.cp_en_attente {
+            e.combat_power = Some(retenue);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
