@@ -190,17 +190,8 @@ impl CaptureDispatcher {
             // entirely (the port/direction filters above already gate traffic),
             // keeping the hot path cheap during heavy combat.
             let unlocked = current_port.is_none();
-            if unlocked {
-                if looks_like_tls(&cap.data) {
-                    continue;
-                }
-                // Ajout XIII NRV : on garde de côté ce qui passe avant le
-                // verrouillage, pour le lire quand on saura quel flux est celui du
-                // jeu. Le filtre lui-même n'est pas touché.
-                crate::xiiinrv::recevoir(cap.src_port, cap.dst_port, &cap.data);
-                if !contains_any(&cap.data, &COMBAT_SIGNATURES) {
-                    continue;
-                }
+            if unlocked && looks_like_tls(&cap.data) {
+                continue;
             }
 
             // Ajout XIII NRV : notre lecture ne passe plus par le réassemblage
@@ -208,7 +199,17 @@ impl CaptureDispatcher {
             // perdait, sur une même entrée en jeu, l'inventaire complet et deux
             // des trois paquets du Combat Power, là où notre propre découpeur
             // rendait les quatre. On reçoit donc les morceaux bruts.
+            //
+            // **Un seul appel, et il doit le rester.** Il y en a eu deux pendant
+            // une journée : un dans le bloc d'avant verrouillage et celui-ci.
+            // Les morceaux portant une signature de combat étaient alors ajoutés
+            // **deux fois** au tampon, ce qui désynchronisait le découpage à coup
+            // sûr et faisait perdre l'inventaire de l'entrée en jeu.
             crate::xiiinrv::recevoir(cap.src_port, cap.dst_port, &cap.data);
+
+            if unlocked && !contains_any(&cap.data, &COMBAT_SIGNATURES) {
+                continue;
+            }
 
             // Log raw packet if packet logging is enabled
             crate::logging::logger::log_packet(&cap);

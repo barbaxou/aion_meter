@@ -1,6 +1,6 @@
 [package]
 name = "xiiinrv-meter"
-version = "2.0.29"
+version = "2.0.30"
 description = "XIII NRV Meter - meter de guilde pour AION 2"
 authors = ["taengu"]
 edition = "2024"
