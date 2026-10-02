@@ -174,8 +174,35 @@ fn nom_detecte_stock() -> &'static Mutex<Option<String>> {
     NOM_DETECTE.get_or_init(|| Mutex::new(None))
 }
 
+/// Un nom de personnage plausible : d'un seul tenant, sans espace ni
+/// ponctuation, de deux à vingt caractères.
+///
+/// Le 02/10/2026, le champ « Nom#ID » d'A2Tools contenait **« demande votre
+/// autorisation »** — un message du jeu, pris pour un nom et enregistré dans les
+/// réglages, où il persistait d'une version à l'autre. Sans ce contrôle, la fiche
+/// serait partie vers le site sous ce nom, créant un personnage fantôme que le
+/// Roster n'aurait jamais pu rattacher à personne.
+///
+/// Le jeu masque par ailleurs les noms des joueurs qui n'ont pas donné leur
+/// accord (`Ni****l`) : ces noms-là sont rejetés aussi, et c'est voulu — on ne
+/// publie pas une fiche sous un nom masqué.
+fn nom_plausible(nom: &str) -> bool {
+    let compte = nom.chars().count();
+    (2..=20).contains(&compte) && nom.chars().all(|c| c.is_alphanumeric())
+}
+
 pub fn nom_detecte(nom: Option<String>) {
-    let nom = nom.map(|n| n.trim().to_string()).filter(|n| !n.is_empty());
+    let nom = nom
+        .map(|n| n.trim().to_string())
+        .filter(|n| !n.is_empty())
+        .filter(|n| {
+            if nom_plausible(n) {
+                true
+            } else {
+                info!("XIII NRV : nom détecté « {} » écarté, il ne ressemble pas à un nom de personnage", n);
+                false
+            }
+        });
     *nom_detecte_stock().lock() = nom;
 }
 

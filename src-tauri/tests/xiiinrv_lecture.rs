@@ -533,6 +533,51 @@ fn un_combat_power_isole_ne_simpose_pas() {
     collecte::vider();
 }
 
+/// Un message du jeu ne doit pas devenir le nom de la fiche.
+///
+/// Le 02/10/2026, le champ « Nom#ID » d'A2Tools contenait « demande votre
+/// autorisation » : un message du jeu, détecté comme nom de personnage et
+/// enregistré dans les réglages, où il persistait d'une version à l'autre. Notre
+/// fiche s'en sert en secours tant que la fiche de personnage n'a pas été lue —
+/// elle serait donc partie vers le site sous ce nom, créant un personnage que le
+/// Roster n'aurait jamais pu rattacher à personne.
+#[test]
+fn un_message_du_jeu_ne_devient_pas_un_nom_de_personnage() {
+    let _garde = VERROU.lock().unwrap_or_else(|e| e.into_inner());
+    collecte::vider();
+    collecte::ouvrir_lecture(true);
+
+    for refuse in [
+        "demande votre autorisation",
+        "Ni****l",             // nom masqué par le jeu
+        "a",                   // trop court
+        "Barbaxx le magnifique et plus encore",
+        " ",
+    ] {
+        collecte::nom_detecte(Some(refuse.to_string()));
+        assert_eq!(
+            collecte::lire_etat().nom,
+            None,
+            "« {} » ne doit pas être retenu comme nom",
+            refuse
+        );
+    }
+
+    for accepte in ["Barbaxx", "Eztheim", "Ar", "Joueur2026"] {
+        collecte::nom_detecte(Some(accepte.to_string()));
+        assert_eq!(
+            collecte::lire_etat().nom.as_deref(),
+            Some(accepte),
+            "« {} » est un nom de personnage valable",
+            accepte
+        );
+    }
+
+    collecte::nom_detecte(None);
+    collecte::ouvrir_lecture(false);
+    collecte::vider();
+}
+
 fn hex_vers_octets(hexa: &str) -> Option<Vec<u8>> {
     // Le journal commence par une marque d'ordre des octets : on écarte toute
     // ligne qui n'est pas strictement de l'hexadécimal.
