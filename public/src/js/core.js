@@ -613,13 +613,30 @@ class DpsApp {
     this.checkAion2WindowTitle();
   }
 
+  // Ajout XIII NRV : un nom de personnage est d'un seul tenant — lettres et
+  // chiffres, de deux a vingt caracteres. Les alphabets coreen et chinois
+  // comptent, d'ou \p{L} plutot qu'une liste de lettres latines.
+  static NOM_DE_PERSONNAGE = /^[\p{L}\p{N}]{2,20}$/u;
+
   parseCharacterNameFromWindowTitle(title) {
     const trimmed = String(title ?? "").trim();
     if (!trimmed) return "";
     if (!trimmed.toLowerCase().startsWith("aion2")) return "";
     const remainder = trimmed.slice(5).trim();
     if (!remainder) return "";
-    return remainder.replace(/^[|l:-]+/i, "").trim();
+    const candidat = remainder.replace(/^[|l:-]+/i, "").trim();
+
+    // Ajout XIII NRV : le jeu met aussi ses notifications dans le titre de sa
+    // fenetre. Le 02/10/2026, le titre portait « demande votre autorisation »
+    // — la mention affichee quand un joueur demande a vous inspecter — et ce
+    // texte devenait le nom du personnage, enregistre dans les reglages ou il
+    // persistait d'une session a l'autre. Il s'affichait alors dans l'overlay a
+    // la place du pseudo, et servait de nom de secours a la fiche envoyee au
+    // site.
+    if (!DpsApp.NOM_DE_PERSONNAGE.test(candidat)) {
+      return "";
+    }
+    return candidat;
   }
 
   checkAion2WindowTitle() {
@@ -1968,7 +1985,20 @@ class DpsApp {
       targetSelectionWindowMs: "5000",
     };
 
-    const storedName = this.safeGetStorage(this.storageKeys.userName) || "";
+    let storedName = this.safeGetStorage(this.storageKeys.userName) || "";
+    // Ajout XIII NRV : une valeur deja enregistree qui ne peut pas etre un nom
+    // de personnage est ecartee. Sans cela, « demande votre autorisation »,
+    // capte dans le titre de la fenetre du jeu, restait indefiniment dans les
+    // reglages — la corriger a la main n'aurait pas suffi, le titre la remettait.
+    if (storedName && !DpsApp.NOM_DE_PERSONNAGE.test(storedName)) {
+      console.warn("[XIII NRV] nom enregistre ecarte :", storedName);
+      try {
+        localStorage.removeItem(this.storageKeys.userName);
+      } catch {
+        // le stockage peut etre indisponible, ce n'est pas bloquant
+      }
+      storedName = "";
+    }
     const storedAllTargetsWindowMs = this.safeGetSetting(this.storageKeys.allTargetsWindowMs) ||
       this.safeGetStorage(this.storageKeys.allTargetsWindowMs) ||
       "120000";
