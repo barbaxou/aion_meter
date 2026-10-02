@@ -249,6 +249,13 @@ impl CaptureDispatcher {
             // Real combat produces a flood of signatures too, so the rate gate covers
             // both idle and combat while staying robust. Spawns/names are still parsed
             // into the store pre-lock, so mobs seen before the first fight stay identified.
+            // Ajout XIII NRV : horodater les coups à l'heure de **capture** du
+            // morceau, et non à celle de son traitement. Un paquet retardé —
+            // réseau chargé, réassemblage en attente — décalait sinon tous ses
+            // coups : mesuré le 02/10/2026, huit coups horodatés onze secondes
+            // après le dernier échange réel, étirant le combat de 151 à 162
+            // secondes et abaissant le DPS de chacun de 9 %.
+            processor.set_capture_time(cap.captured_at_ms);
             let parsed = assembler.process_chunk(&cap.data, processor);
 
             let signature_locked =

@@ -67,6 +67,12 @@ pub struct StreamProcessor {
     seen_embedded_hexes: BoundedHashSet,
     dot_damage_skill_ids: HashSet<i32>,
     pending_compact_skill_context: Option<PendingCompactSkillContext>,
+    /// Ajout XIII NRV : l'heure à laquelle la carte réseau a vu le morceau en
+    /// cours de traitement. Les coups sont horodatés avec elle plutôt qu'avec
+    /// l'heure du traitement, qui peut arriver bien plus tard quand le flux a
+    /// dû attendre. Zéro tant qu'aucun morceau n'a été reçu : le paquet garde
+    /// alors son horodatage de construction.
+    capture_time_ms: i64,
     /// When set, override the timestamp on all created packets (for replay mode).
     override_timestamp: Option<i64>,
 }
@@ -80,12 +86,18 @@ impl StreamProcessor {
             seen_embedded_hexes: BoundedHashSet::new(16_384),
             dot_damage_skill_ids: HashSet::new(), // loaded lazily
             pending_compact_skill_context: None,
+            capture_time_ms: 0,
             override_timestamp: None,
         }
     }
 
     pub fn set_dot_skill_ids(&mut self, ids: HashSet<i32>) {
         self.dot_damage_skill_ids = ids;
+    }
+
+    /// Ajout XIII NRV : l'heure de capture du morceau qui va être traité.
+    pub fn set_capture_time(&mut self, captured_at_ms: i64) {
+        self.capture_time_ms = captured_at_ms;
     }
 
     /// Set an override timestamp for all packets created by this processor.
@@ -447,6 +459,10 @@ impl StreamProcessor {
         }
 
         let mut pdp = ParsedDamagePacket::new();
+        // Ajout XIII NRV : horodater à la capture plutôt qu'au traitement.
+        if self.capture_time_ms > 0 {
+            pdp.set_timestamp(self.capture_time_ms);
+        }
         if let Some(ts) = self.override_timestamp {
             pdp.set_timestamp(ts);
         }
@@ -2081,6 +2097,10 @@ impl StreamProcessor {
 
             if actor_value != target_value {
                 let mut pdp = ParsedDamagePacket::new();
+                // Ajout XIII NRV : horodater à la capture plutôt qu'au traitement.
+                if self.capture_time_ms > 0 {
+                    pdp.set_timestamp(self.capture_time_ms);
+                }
                 if let Some(ts) = self.override_timestamp {
                     pdp.set_timestamp(ts);
                 }
