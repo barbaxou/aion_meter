@@ -96,6 +96,20 @@ struct PcapLib {
     open_live: unsafe extern "C" fn(*const c_char, c_int, c_int, c_int, *mut c_char) -> PcapT,
     close: unsafe extern "C" fn(PcapT),
     next_ex: unsafe extern "C" fn(PcapT, *mut *mut PcapPkthdr, *mut *const u8) -> c_int,
+    /// Ajout XIII NRV : propres à Npcap, donc facultatifs. Absents, on se passe
+    /// simplement du grand tampon et du comptage — la capture fonctionne comme
+    /// avant.
+    set_buff: Option<unsafe extern "C" fn(PcapT, c_int) -> c_int>,
+    stats: Option<unsafe extern "C" fn(PcapT, *mut PcapStat) -> c_int>,
+}
+
+/// Compteurs de `pcap_stats` : reçus, perdus par le noyau, perdus par la carte.
+#[repr(C)]
+#[derive(Default, Clone, Copy)]
+struct PcapStat {
+    ps_recv: c_uint,
+    ps_drop: c_uint,
+    ps_ifdrop: c_uint,
 }
 
 impl PcapLib {
@@ -123,12 +137,24 @@ impl PcapLib {
                 unsafe extern "C" fn(PcapT, *mut *mut PcapPkthdr, *mut *const u8) -> c_int,
             > = lib.get(b"pcap_next_ex").map_err(|e| format!("pcap_next_ex: {}", e))?;
 
+            // Ajout XIII NRV : facultatifs, on n'échoue pas s'ils manquent.
+            let set_buff = lib
+                .get::<unsafe extern "C" fn(PcapT, c_int) -> c_int>(b"pcap_setbuff")
+                .ok()
+                .map(|f| *f);
+            let stats = lib
+                .get::<unsafe extern "C" fn(PcapT, *mut PcapStat) -> c_int>(b"pcap_stats")
+                .ok()
+                .map(|f| *f);
+
             Ok(Self {
                 findalldevs: *findalldevs,
                 freealldevs: *freealldevs,
                 open_live: *open_live,
                 close: *close,
                 next_ex: *next_ex,
+                set_buff,
+                stats,
                 _lib: lib,
             })
         }
@@ -201,6 +227,28 @@ impl PcapLib {
                 .to_string_lossy()
                 .to_string();
             return Err(format!("pcap_open_live failed: {}", err));
+        }
+
+        // Ajout XIII NRV : agrandir le tampon du noyau.
+        //
+        // `pcap_open_live` laisse Npcap choisir, et son défaut est petit. En
+        // combat de groupe le débit dépasse ce que le meter consomme, le tampon
+        // déborde et des paquets sont perdus pour de bon. Mesuré le 02/10/2026 en
+        // comparant avec l'analyseur du jeu : **14 % des coups manquants** sur un
+        // combat, **23 %** sur un autre, alors que les comptés étaient justes au
+        // chiffre près.
+        //
+        // Doit être appelé après l'ouverture et avant la première lecture.
+        if let Some(set_buff) = self.set_buff {
+            const TAMPON: c_int = 32 * 1024 * 1024;
+            let code = unsafe { set_buff(handle, TAMPON) };
+            if code != 0 {
+                tracing::warn!(
+                    "XIII NRV : tampon de capture non agrandi sur {} (code {})",
+                    name,
+                    code
+                );
+            }
         }
 
         Ok(handle)
@@ -355,11 +403,37 @@ fn start_capture_thread(
 
         info!("Capture active on {}", label);
 
+        // Ajout XIII NRV : de quoi mesurer les paquets perdus plutôt que de les
+        // déduire. La comparaison avec l'analyseur du jeu montrait 14 à 23 % de
+        // coups manquants ; ces compteurs disent si c'est bien la capture qui
+        // déborde, et si le tampon agrandi y suffit.
+        let mut vus: u64 = 0;
+        let mut derniers_perdus: c_uint = 0;
+
         while running.load(Ordering::SeqCst) {
             let mut header: *mut PcapPkthdr = ptr::null_mut();
             let mut data: *const u8 = ptr::null();
 
             let ret = unsafe { (pcap.next_ex)(handle, &mut header, &mut data) };
+
+            // Un relevé toutes les 20 000 trames : assez rare pour ne rien coûter,
+            // assez fréquent pour situer la perte dans la soirée.
+            vus += 1;
+            if vus % 20_000 == 0 {
+                if let Some(stats) = pcap.stats {
+                    let mut compteurs = PcapStat::default();
+                    if unsafe { stats(handle, &mut compteurs) } == 0
+                        && compteurs.ps_drop > derniers_perdus
+                    {
+                        let nouveaux = compteurs.ps_drop - derniers_perdus;
+                        derniers_perdus = compteurs.ps_drop;
+                        warn!(
+                            "XIII NRV : {} paquets perdus à la capture sur {} ({} au total, {} reçus)",
+                            nouveaux, label, compteurs.ps_drop, compteurs.ps_recv
+                        );
+                    }
+                }
+            }
 
             match ret {
                 1 => {
