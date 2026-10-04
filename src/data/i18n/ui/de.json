@@ -5,7 +5,9 @@
       "dps": "DPS",
       "total": "SCH",
       "ariaDps": "Zeigt DPS",
-      "ariaDamage": "Zeigt Gesamtschaden"
+      "ariaDamage": "Zeigt Gesamtschaden",
+      "both": "BEIDE",
+      "ariaBoth": "Zeigt DPS und Gesamtschaden"
     }
   },
   "details": {
@@ -174,6 +176,7 @@
     "roundDps": "DPS runden",
     "autoHideMeter": "Meter automatisch ausblenden",
     "showSuspendBtn": "Pause-Schaltfläche anzeigen",
+    "showLockBtn": "Sperrtaste anzeigen (durchklickbar)",
     "playerLimit": {
       "label": "Max. angezeigte Spieler"
     },
@@ -243,7 +246,8 @@
       "reload": "Daten neu laden",
       "toggle": "Fenster ein-/ausblenden",
       "pressKeys": "Tasten drücken...",
-      "needModifiers": "2+ Modifikatoren nötig"
+      "needModifiers": "2+ Modifikatoren nötig",
+      "lock": "Overlay sperren/entsperren"
     },
     "defaultMeterMode": {
       "label": "Standardmodus"

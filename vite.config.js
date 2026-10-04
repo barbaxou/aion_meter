@@ -1,5 +1,5 @@
 import { defineConfig } from "vite";
-import { cpSync, existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 // @ts-expect-error process is a nodejs global
@@ -38,7 +38,12 @@ function embarquerLesDonnees() {
         const de = join(racine, relatif);
         const vers = join(destination, relatif);
         mkdirSync(dirname(vers), { recursive: true });
-        cpSync(de, vers);
+        // `copyFileSync` et non `cpSync` : sur Windows, `cpSync` échoue sur un
+        // nom de fichier non latin — les icônes de classe s'appellent 검성.png,
+        // 궁성.png… — avec le message déroutant « The operation completed
+        // successfully ». Nous ne copions jamais de dossier, un copieur de
+        // fichier suffit.
+        copyFileSync(de, vers);
         fichiers += 1;
         octets += statSync(de).size;
       };

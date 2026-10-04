@@ -6,6 +6,8 @@
       "total": "DGT",
       "ariaDps": "Affiche les DPS",
       "ariaDamage": "Affiche les dégâts totaux",
+      "both": "LES 2",
+      "ariaBoth": "Affiche les DPS et les dégâts totaux",
       "part": "%",
       "heal": "SOINS",
       "ariaPart": "Affiche la part des dégâts",
@@ -106,7 +108,11 @@
     },
     "dpsChart": "Graphique DPS",
     "historyBtn": "Historique",
-    "timeline": "Chronologie"
+    "timeline": "Chronologie",
+    "mode": {
+      "dmg": "Dégâts",
+      "heal": "Soins"
+    }
   },
   "history": {
     "title": "Historique des combats",
@@ -180,6 +186,7 @@
     "roundDps": "Arrondir les DPS",
     "autoHideMeter": "Masquer le meter automatiquement",
     "showSuspendBtn": "Afficher le bouton pause",
+    "showLockBtn": "Afficher le bouton de verrouillage (clics traversants)",
     "playerLimit": {
       "label": "Joueurs affichés max."
     },
@@ -250,6 +257,7 @@
       "toggle": "Afficher/masquer la fenêtre",
       "pressKeys": "Appuyez sur des touches...",
       "needModifiers": "2 modificateurs minimum",
+      "lock": "Verrouiller/déverrouiller l'overlay",
       "unset": "Appuyez pour configurer"
     },
     "defaultMeterMode": {

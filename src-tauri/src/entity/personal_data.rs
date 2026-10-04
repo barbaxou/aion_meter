@@ -25,6 +25,15 @@ pub struct PersonalData {
     /// damage is actually healing/buffs »), et rien ne permet aujourd'hui de les
     /// séparer.
     pub heal: i64,
+    /// Renders this player's name gold. Resolved locally against a roster the
+    /// meter downloads — see `crate::supporters`; nothing about your party is
+    /// ever sent anywhere to work this out.
+    ///
+    /// Cosmetic and nothing else. It must never affect ordering, bar colour, or
+    /// any number, because a meter that flatters the people who paid is not a
+    /// meter anybody should trust.
+    #[serde(default)]
+    pub is_supporter: bool,
 }
 
 impl PersonalData {
@@ -38,6 +47,7 @@ impl PersonalData {
             nickname,
             combat_power: 0,
             heal: 0,
+            is_supporter: false,
         }
     }
 
@@ -51,6 +61,7 @@ impl PersonalData {
             nickname,
             combat_power: 0,
             heal: 0,
+            is_supporter: false,
         }
     }
 

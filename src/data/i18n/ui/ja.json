@@ -5,7 +5,9 @@
       "dps": "DPS",
       "total": "ダメージ",
       "ariaDps": "DPSを表示中",
-      "ariaDamage": "総ダメージを表示中"
+      "ariaDamage": "総ダメージを表示中",
+      "both": "両方",
+      "ariaBoth": "DPSと総ダメージを表示中"
     }
   },
   "details": {
@@ -174,6 +176,7 @@
     "roundDps": "DPSを丸める",
     "autoHideMeter": "メーターを自動的に隠す",
     "showSuspendBtn": "一時停止ボタンを表示",
+    "showLockBtn": "ロックボタンを表示（クリック透過）",
     "playerLimit": {
       "label": "表示する最大プレイヤー数"
     },
@@ -243,7 +246,8 @@
       "reload": "データを再読み込み",
       "toggle": "ウィンドウの表示/非表示",
       "pressKeys": "キーを押してください...",
-      "needModifiers": "修飾キーが2つ以上必要です"
+      "needModifiers": "修飾キーが2つ以上必要です",
+      "lock": "オーバーレイのロック/解除"
     },
     "defaultMeterMode": {
       "label": "デフォルトのモード"

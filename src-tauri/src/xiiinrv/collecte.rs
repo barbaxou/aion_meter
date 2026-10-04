@@ -148,10 +148,8 @@ static LECTURE_OUVERTE: AtomicBool = AtomicBool::new(false);
 pub fn ouvrir_lecture(ouverte: bool) {
     let avant = LECTURE_OUVERTE.swap(ouverte, Ordering::Relaxed);
     if avant && !ouverte {
-        // On vient de refermer : on n'a aucune raison de garder la fiche,
-        // ni de continuer à laisser passer un flux.
+        // On vient de refermer : on n'a aucune raison de garder la fiche.
         vider();
-        super::tampon::oublier();
     }
 }
 

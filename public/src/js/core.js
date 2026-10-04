@@ -7,12 +7,16 @@ const REMOTE_APPLIED_SETTING_CONTROLS = {
   "dpsMeter.mainPlayerNamesBold": ".playerNamesBoldCheckbox",
   "dpsMeter.mainPlayerDpsBold": ".playerDpsBoldCheckbox",
   "dpsMeter.showPing": ".showPingCheckbox",
-  // Les deux opacités ne sont volontairement PAS ici. Les y mettre crée une
-  // boucle : le curseur applique la valeur, l'enregistre, le serveur rediffuse
-  // le changement, la rediffusion repousse le curseur, qui réapplique… Le
-  // curseur se met à bouger tout seul et l'application se fige. Elles sont
-  // appliquées directement par leur propre gestionnaire, dans la fenêtre où on
-  // les règle.
+  "dpsMeter.showSupporterColors": ".showSupporterColorsCheckbox",
+  "dpsMeter.showSuspendBtn": ".showSuspendBtnCheckbox",
+  "dpsMeter.showLockBtn": ".showLockBtnCheckbox",
+  // Les deux opacités ne sont volontairement PAS ici, ni `bossNameSize` — que la
+  // version d'origine y remet. Les y mettre crée une boucle : le curseur
+  // applique la valeur, l'enregistre, le serveur rediffuse le changement, la
+  // rediffusion repousse le curseur, qui réapplique… Le curseur se met à bouger
+  // tout seul et l'application se fige, ce que barbaxou a constaté le
+  // 29/09/2026. Les trois sont appliquées directement par leur propre
+  // gestionnaire, dans la fenêtre où on les règle.
 };
 
 class DpsApp {
@@ -27,6 +31,7 @@ class DpsApp {
     this.pinMeToTop = false;
     this.slimMode = false;
     this.mainPlayerNamesBold = true;
+    this.showSupporterColors = true;
     this.mainPlayerDpsBold = true;
     this.includeMainMeterScreenshot = false;
     this.saveScreenshotToFolder = false;
@@ -56,6 +61,7 @@ class DpsApp {
       debugLogging: "dpsMeter.debugLoggingEnabled",
       pinMeToTop: "dpsMeter.pinMeToTop",
       mainPlayerNamesBold: "dpsMeter.mainPlayerNamesBold",
+      showSupporterColors: "dpsMeter.showSupporterColors",
       mainPlayerDpsBold: "dpsMeter.mainPlayerDpsBold",
       showPing: "dpsMeter.showPing",
       showTotalDps: "dpsMeter.showTotalDps",
@@ -71,6 +77,8 @@ class DpsApp {
       betaUi: "dpsMeter.betaUi",
       detailsMonitor: "dpsMeter.detailsMonitor",
       showSuspendBtn: "dpsMeter.showSuspendBtn",
+      showLockBtn: "dpsMeter.showLockBtn",
+      overlayLocked: "dpsMeter.overlayLocked",
     };
 
     this.dpsFormatter = new Intl.NumberFormat("en-US");
@@ -237,6 +245,7 @@ class DpsApp {
 
     this.resetBtn = document.querySelector(".resetBtn");
     this.suspendBtn = document.querySelector(".suspendBtn");
+    this.lockBtn = document.querySelector(".lockBtn");
     this.headerBtns = document.querySelector(".headerBtns");
     this.targetModeBtn = document.querySelector(".footerBtns .targetModeBtn");
     this.collapseBtn = document.querySelector(".collapseBtn");
@@ -412,66 +421,54 @@ class DpsApp {
     });
     if (this.detailsScreenshotBtn) {
       let screenshotNoteTimer = null;
-      this.detailsScreenshotBtn.addEventListener("click", () => {
+      this.detailsScreenshotBtn.addEventListener("click", async () => {
         const tooltipText =
           this.i18n?.t("details.screenshot.captured", "Captured Screenshot") ?? "Captured Screenshot";
-        const meterRect = document.querySelector(".meter")?.getBoundingClientRect?.();
         const detailsRect = this.detailsPanel?.classList?.contains("open")
           ? this.detailsPanel.getBoundingClientRect()
           : null;
         const includeMeter = !!this.includeMainMeterScreenshot;
-        const baseRect = includeMeter ? meterRect || detailsRect : detailsRect;
-        if (!baseRect) return;
-        const minX = includeMeter && meterRect && detailsRect
-          ? Math.min(meterRect.left, detailsRect.left)
-          : baseRect.left;
-        const minY = includeMeter && meterRect && detailsRect
-          ? Math.min(meterRect.top, detailsRect.top)
-          : baseRect.top;
-        const maxX = includeMeter && meterRect && detailsRect
-          ? Math.max(meterRect.right, detailsRect.right)
-          : baseRect.right;
-        const maxY = includeMeter && meterRect && detailsRect
-          ? Math.max(meterRect.bottom, detailsRect.bottom)
-          : baseRect.bottom;
-        const rectWidth = Math.max(1, maxX - minX);
-        const rectHeight = Math.max(1, maxY - minY);
-        const scale = window.devicePixelRatio || 1;
-        const clipboardSuccess = window.javaBridge?.captureScreenshotToClipboard?.(
-          minX,
-          minY,
-          rectWidth,
-          rectHeight,
-          scale
-        );
-        let fileSuccess = false;
-        if (this.saveScreenshotToFolder && this.screenshotFolder) {
-          const filename = this.buildScreenshotFilename();
-          fileSuccess = !!window.javaBridge?.captureScreenshotToFile?.(
-            minX,
-            minY,
-            rectWidth,
-            rectHeight,
-            scale,
-            this.screenshotFolder,
-            filename
-          );
-        }
-        if ((!clipboardSuccess && !fileSuccess) || !this.detailsScreenshotNote) return;
-        this.detailsScreenshotBtn.setAttribute("title", tooltipText);
-        if (clipboardSuccess && fileSuccess) {
+        // In its own window, Details cannot measure the meter (a different
+        // window), so the backend adds the meter window to the capture. When
+        // Details is a panel beside the meter, both are measured here.
+        const ownWindow = document.documentElement.classList.contains("detailsWindow");
+        const meterRect = !ownWindow ? document.querySelector(".meter")?.getBoundingClientRect?.() : null;
+        const rects = [detailsRect, includeMeter ? meterRect : null].filter(Boolean);
+        if (!rects.length) return;
+        const left = Math.min(...rects.map((r) => r.left));
+        const top = Math.min(...rects.map((r) => r.top));
+        const right = Math.max(...rects.map((r) => r.right));
+        const bottom = Math.max(...rects.map((r) => r.bottom));
+        const saveFile = !!this.saveScreenshotToFolder;
+        const result = await window.javaBridge?.captureScreenshot?.({
+          x: left,
+          y: top,
+          width: Math.max(1, right - left),
+          height: Math.max(1, bottom - top),
+          scale: window.devicePixelRatio || 1,
+          includeMeter: includeMeter && ownWindow,
+          saveFile,
+          folder: saveFile ? this.screenshotFolder : null,
+          filename: saveFile ? this.buildScreenshotFilename() : null,
+        });
+        const clipboardSuccess = !!result?.clipboard;
+        const fileSuccess = !!result?.file;
+        if (!this.detailsScreenshotNote) return;
+        if (!clipboardSuccess && !fileSuccess) {
+          this.detailsScreenshotNote.textContent = this.i18n?.t("details.screenshot.failed", "Screenshot failed") ?? "Screenshot failed";
+        } else if (clipboardSuccess && fileSuccess) {
           this.detailsScreenshotNote.textContent = "Saved to clipboard + file";
         } else if (fileSuccess) {
           this.detailsScreenshotNote.textContent = "Saved to file";
         } else {
-          this.detailsScreenshotNote.textContent = "Saved to clipboard";
+          this.detailsScreenshotNote.textContent = saveFile ? "Saved to clipboard (file failed)" : "Saved to clipboard";
         }
+        this.detailsScreenshotBtn.setAttribute("title", fileSuccess ? `${tooltipText}: ${result.file}` : tooltipText);
         this.detailsScreenshotNote.classList.add("isVisible");
-        if (this.detailsPanel) {
-          this.triggerDetailsFlash();
-        }
-        if (includeMeter && meterRect) {
-          this.triggerMeterFlash();
+        // Flash after the capture, so the flash is not in the picture.
+        if (clipboardSuccess || fileSuccess) {
+          if (this.detailsPanel) this.triggerDetailsFlash();
+          if (includeMeter && meterRect) this.triggerMeterFlash();
         }
         if (screenshotNoteTimer) window.clearTimeout(screenshotNoteTimer);
         screenshotNoteTimer = window.setTimeout(() => {
@@ -498,13 +495,13 @@ class DpsApp {
       this.updateSupportPrimaryAction(lang);
       this.updateSupportQrImage(this.supportPrimaryButton?.dataset.support || "afdian");
     });
-    // Ajout XIII NRV : la vérification de mise à jour d'A2Tools est coupée.
-    // Elle récupérait sur a2tools.app une adresse de MSI, le téléchargeait et
-    // l'installait avec msiexec /passive — sans signature, sans empreinte, sans
-    // restriction de domaine. Qui contrôle ce serveur aurait pu installer
+    // Ajout XIII NRV : la vérification de mise à jour d'A2Tools reste coupée.
+    // Elle récupère sur a2tools.app une adresse de MSI, le télécharge et
+    // l'installe avec msiexec /passive — sans signature, sans empreinte, sans
+    // restriction de domaine. Qui contrôle ce serveur pourrait installer
     // n'importe quoi chez chaque membre. Nos mises à jour se font en
     // distribuant nous-mêmes une nouvelle version.
-    // window.ReleaseChecker?.start?.();
+    // if (window.A2_VIEW === "main") window.ReleaseChecker?.start?.();
     this.setupConsoleDebugging();
     this.bindNativeHotkeyBridge();
 
@@ -648,7 +645,14 @@ class DpsApp {
       this.updateConnectionStatusUi();
     }
     if (!running) return;
+    this.syncCharacterNameFromGame();
     const detectedName = this.parseCharacterNameFromWindowTitle(title);
+    // Act on the title only when it changes. It is not kept current (a new
+    // character keeps the title of the session it was created in), so a title
+    // that merely disagrees with the game's own record of who is playing is
+    // stale, and acting on it every poll would reset the meter every poll.
+    if (detectedName === this._lastTitleName) return;
+    this._lastTitleName = detectedName;
     if (!detectedName || detectedName === this.USER_NAME) return;
     const hadPreviousName = !!this.USER_NAME;
     if (hadPreviousName) {
@@ -660,6 +664,32 @@ class DpsApp {
     if (this.characterNameInput && document.activeElement !== this.characterNameInput) {
       this.characterNameInput.value = detectedName;
     }
+  }
+
+  // Once the game has sent its self record the backend knows who is playing,
+  // and that beats both the window title and the name remembered from last
+  // time. Adopt it quietly: this is not a character switch, so none of
+  // setUserName's resets apply. Returns whether the game has named the local
+  // player (a name of "" is an unnamed tutorial character).
+  syncCharacterNameFromGame() {
+    const raw = window.javaBridge?.getConnectionInfo?.();
+    const info = typeof raw === "string" ? this.safeParseJSON(raw, {}) : {};
+    if (!info?.characterNameFromGame) return false;
+    const name = String(info.characterName ?? "").trim();
+    if (name === this.USER_NAME) return true;
+    this.USER_NAME = name;
+    if (this.characterNameInput && document.activeElement !== this.characterNameInput) {
+      this.characterNameInput.value = name;
+    }
+    // A tutorial character's missing name is not worth remembering over the
+    // last real one.
+    if (name) {
+      this.safeSetStorage(this.storageKeys.userName, name);
+      const id = Number(info.localPlayerId);
+      if (Number.isFinite(id) && id > 0) this.rememberLocalIdForName(name, id);
+    }
+    this.renderCurrentRows();
+    return true;
   }
 
   stopPolling() {
@@ -795,8 +825,12 @@ class DpsApp {
 
     const tooltipName = String(row?.name || "-").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     const tooltipClassIcon = row?.job ? `<img class="hoverDetailsTooltipClassIcon" src="./assets/${row.job}.png" alt="" onerror="this.style.display='none'">` : "";
+    // Wrapped rather than styled on the header, so the icon keeps its own colour.
+    const tooltipNameHtml = row?.isSupporter
+      ? `<span class="isSupporter">${tooltipName}</span>`
+      : tooltipName;
     this.hoverTooltipEl.innerHTML = `
-      <div class="hoverDetailsTooltipHeader">${tooltipClassIcon}${tooltipName}</div>
+      <div class="hoverDetailsTooltipHeader">${tooltipClassIcon}${tooltipNameHtml}</div>
       <div class="hoverDetailsTooltipStats">
         <span>${this.i18n?.t("header.display.dps", "DPS") ?? "DPS"}: ${dpsText}</span>
         <span>${this.i18n?.t("details.stats.totalDamage", "Total Damage") ?? "Total Damage"}: ${totalDamageText}</span>
@@ -940,6 +974,7 @@ class DpsApp {
       targetMaxHp,
       targetTotalDamage,
       targetCurrentHp,
+      dungeonId,
     } = this.buildRowsFromPayload(raw);
     if (this.refreshPending) {
       const pendingAgeMs = Math.max(0, now - (Number(this.refreshPendingStartedAt) || 0));
@@ -1057,7 +1092,8 @@ class DpsApp {
       rowsToRender = rowsToRender.filter((row) => row.name === this.USER_NAME);
     }
     // render
-    const nextTargetLabel = this.getTargetLabel({ targetId, targetName, targetMode });
+    this.lastDungeonId = dungeonId;
+    const nextTargetLabel = this.getTargetLabel({ targetId, targetName, targetMode, dungeonId });
     if (this.elBossName) {
       if (this.elBossName.textContent !== nextTargetLabel) {
         this.elBossName.textContent = nextTargetLabel;
@@ -1124,6 +1160,7 @@ class DpsApp {
     const targetTotalDamage = Number.isFinite(Number(payload?.targetTotalDamage))
       ? Number(payload.targetTotalDamage)
       : 0;
+    const dungeonId = Math.trunc(Number(payload?.dungeonId)) || 0;
     const targetCurrentHp = Number.isFinite(Number(payload?.targetCurrentHp))
       ? Number(payload.targetCurrentHp)
       : -1;
@@ -1138,6 +1175,7 @@ class DpsApp {
       targetMaxHp,
       targetTotalDamage,
       targetCurrentHp,
+      dungeonId,
     };
   }
 
@@ -1191,6 +1229,9 @@ class DpsApp {
         combatPower,
         isUser: name === this.USER_NAME,
         isIdentifying,
+        // Resolved in Rust against a downloaded roster; the frontend only
+        // renders it. Cosmetic only — it must not reach sorting or bar colour.
+        isSupporter: !!(isObj && value.isSupporter) && this.showSupporterColors !== false,
       });
     }
 
@@ -1413,7 +1454,9 @@ class DpsApp {
     this.localPlayerId = actorId;
     window.javaBridge?.bindLocalActorId?.(String(actorId));
     window.javaBridge?.setLocalPlayerId?.(String(actorId));
-    if (this.USER_NAME) {
+    // When the game has named the local player the backend already holds the
+    // right name; pushing ours could stamp another character's on this row.
+    if (this.USER_NAME && !this.syncCharacterNameFromGame()) {
       window.javaBridge?.bindLocalNickname?.(String(actorId), this.USER_NAME);
       this.setUserName(this.USER_NAME, { persist: true, syncBackend: true });
       this.rememberLocalIdForName(this.USER_NAME, actorId);
@@ -1859,6 +1902,9 @@ class DpsApp {
     this.suspendBtn?.addEventListener("click", () => {
       this._setCaptureSuspended(!this._captureSuspended);
     });
+    this.lockBtn?.addEventListener("click", () => {
+      this._setOverlayLocked(!this._overlayLocked);
+    });
     this.targetModeBtn?.addEventListener("click", () => {
       const modes = ["lastHitByMe", "bossTargets", "trainTargets", "allTargets"];
       const currentIndex = modes.indexOf(this.targetSelection);
@@ -1877,8 +1923,8 @@ class DpsApp {
       }
     });
     this.metricToggleBtn?.addEventListener("click", () => {
-      // Ajout XIII NRV : le bouton fait defiler les quatre mesures, au lieu de
-      // basculer entre deux.
+      // Ajout XIII NRV : le bouton fait defiler nos quatre mesures. Leur mode
+      // « both » ne sert plus : la ligne affiche deja deux valeurs au choix.
       const position = DpsApp.MESURES.indexOf(this.displayMode);
       const suivante = DpsApp.MESURES[(position + 1) % DpsApp.MESURES.length];
       this.setDisplayMode(suivante, { persist: true });
@@ -1918,6 +1964,9 @@ class DpsApp {
     }
   }
 
+  // Retrait XIII NRV : `setAccountState` et `refreshAccountPanel`, qui pilotaient
+  // la section « A2 Tools Account » des réglages — retirée elle aussi.
+
   setupSettingsPanel() {
     this.settingsPanel = document.querySelector(".settingsPanel");
     this.settingsClose = document.querySelector(".settingsClose");
@@ -1950,6 +1999,7 @@ class DpsApp {
     this.meterLayoutDropdownBtn = document.querySelector(".meterLayoutDropdownBtn");
     this.meterLayoutDropdownMenu = document.querySelector(".meterLayoutDropdownMenu");
     this.playerNamesBoldCheckbox = document.querySelector(".playerNamesBoldCheckbox");
+    this.showSupporterColorsCheckbox = document.querySelector(".showSupporterColorsCheckbox");
     this.playerDpsBoldCheckbox = document.querySelector(".playerDpsBoldCheckbox");
     this.meterOpacityInput = document.querySelector(".meterOpacityInput");
     this.meterOpacityValue = document.querySelector(".meterOpacityValue");
@@ -2017,6 +2067,10 @@ class DpsApp {
     }
     const storedDebugLogging = this.safeGetSetting(this.storageKeys.debugLogging) === "true";
     const storedPinMeToTop = this.safeGetSetting(this.storageKeys.pinMeToTop) === "true";
+    // Default on: a supporter's gold name is the thing they paid for, so it
+    // should be visible unless a viewer has deliberately turned it off.
+    this.showSupporterColors =
+      this.safeGetSetting(this.storageKeys.showSupporterColors) !== "false";
     const mainPlayerNamesBoldSetting = this.safeGetSetting(this.storageKeys.mainPlayerNamesBold);
     const storedMainPlayerNamesBold = mainPlayerNamesBoldSetting !== "false";
     const mainPlayerDpsBoldSetting = this.safeGetSetting(this.storageKeys.mainPlayerDpsBold);
@@ -2057,6 +2111,21 @@ class DpsApp {
 
     if (this.characterNameInput) {
       this.characterNameInput.value = this.USER_NAME;
+      // The player's own word on their name: saved when they leave the field
+      // or press Enter, sent as a manual change (the backend takes it even
+      // after the game has named a character, unlike a remembered name), and
+      // broadcast so the meter window adopts it too. The game's own record of
+      // who is playing still replaces it on the next zone change if it differs.
+      this.characterNameInput.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") event.target.blur();
+      });
+      this.characterNameInput.addEventListener("change", (event) => {
+        const name = String(event.target?.value || "").trim();
+        event.target.value = name;
+        if (name === this.USER_NAME) return;
+        this.setUserName(name, { persist: true, syncBackend: true, manual: true });
+        this.safeSetSetting(this.storageKeys.userName, name);
+      });
     }
     if (this.localActorIdInput) {
       this.localActorIdInput.value = this.localPlayerId ? String(this.localPlayerId) : "";
@@ -2172,6 +2241,7 @@ class DpsApp {
         }
       });
     }
+    this.initOverlayLock();
     // Restore suspend state from backend on load
     this._captureSuspended = !!window.javaBridge?.isCaptureSuspended?.();
     this._updateSuspendBtnIcon();
@@ -2192,6 +2262,16 @@ class DpsApp {
       this.pinMeToTopCheckbox.addEventListener("change", (event) => {
         const isChecked = !!event.target?.checked;
         this.setPinMeToTop(isChecked, { persist: true });
+      });
+    }
+    if (this.showSupporterColorsCheckbox) {
+      this.showSupporterColorsCheckbox.checked = this.showSupporterColors;
+      this.showSupporterColorsCheckbox.addEventListener("change", (event) => {
+        this.showSupporterColors = !!event.target?.checked;
+        this.safeSetSetting(
+          this.storageKeys.showSupporterColors,
+          String(this.showSupporterColors)
+        );
       });
     }
     if (this.playerNamesBoldCheckbox) {
@@ -2366,6 +2446,8 @@ class DpsApp {
         if (this._autoDetectDevice) {
           window.javaBridge?.setManualDevice?.("");
           this.refreshConnectionInfo();
+        } else {
+          this._loadDeviceDropdown();
         }
       });
     }
@@ -2933,8 +3015,10 @@ class DpsApp {
       });
     }
     if (this.detailsScreenshotFolderBtn) {
-      this.detailsScreenshotFolderBtn.addEventListener("click", () => {
-        const selected = window.javaBridge?.chooseScreenshotFolder?.(this.screenshotFolder);
+      this.detailsScreenshotFolderBtn.addEventListener("click", async () => {
+        const selected = await window.javaBridge?.chooseScreenshotFolder?.(
+          this.screenshotFolder || this.getDefaultScreenshotFolder()
+        );
         if (!selected || typeof selected !== "string") return;
         this.screenshotFolder = selected;
         this.safeSetSetting(this.storageKeys.detailsScreenshotFolder, this.screenshotFolder);
@@ -3203,7 +3287,8 @@ class DpsApp {
     if (!this.detailsScreenshotFolderRow) return;
     this.detailsScreenshotFolderRow.classList.toggle("isHidden", !this.saveScreenshotToFolder);
     if (this.detailsScreenshotFolderPath) {
-      this.detailsScreenshotFolderPath.textContent = this.screenshotFolder || "-";
+      this.detailsScreenshotFolderPath.textContent =
+        this.screenshotFolder || this.getDefaultScreenshotFolder() || "-";
     }
   }
 
@@ -3276,6 +3361,7 @@ class DpsApp {
 
     const reloadBtn = document.querySelector(".reloadKeybindBtn");
     const toggleBtn = document.querySelector(".toggleKeybindBtn");
+    const lockKeyBtn = document.querySelector(".lockKeybindBtn");
 
     this.refreshKeybindLabels = () => {
       const reloadLabel = window.javaBridge?.getCurrentHotKey?.() || "";
@@ -3287,6 +3373,10 @@ class DpsApp {
       if (toggleBtn) {
         toggleBtn.querySelector(".keybindText").textContent =
           toggleLabel || this.i18n?.t("settings.keybind.unset", "Appuyez pour configurer") || "Appuyez pour configurer";
+      }
+      if (lockKeyBtn) {
+        lockKeyBtn.querySelector(".keybindText").textContent =
+          window.javaBridge?.getCurrentLockHotKey?.() || "Ctrl+Alt+L";
       }
     };
     this.refreshKeybindLabels();
@@ -3318,6 +3408,7 @@ class DpsApp {
 
     reloadBtn?.addEventListener("click", () => handleKeybindClick(reloadBtn, "reload"));
     toggleBtn?.addEventListener("click", () => handleKeybindClick(toggleBtn, "toggle"));
+    lockKeyBtn?.addEventListener("click", () => handleKeybindClick(lockKeyBtn, "lock"));
 
     document.addEventListener("keydown", (event) => {
       if (!activeRecording) return;
@@ -3376,6 +3467,9 @@ class DpsApp {
       } else if (type === "toggle") {
         window.javaBridge?.setToggleWindowHotkey?.(mods, vk);
         if (toggleBtn) toggleBtn.querySelector(".keybindText").textContent = label;
+      } else if (type === "lock") {
+        window.javaBridge?.setLockHotkey?.(mods, vk);
+        if (lockKeyBtn) lockKeyBtn.querySelector(".keybindText").textContent = label;
       }
     }, true);
 
@@ -3396,9 +3490,7 @@ class DpsApp {
       this.detailsUI?.close?.({ keepPinned: false });
       this.refreshConnectionInfo();
       this.refreshKeybindLabels?.();
-      // Populate device dropdown with current list of available devices
-      const savedDevice = this.safeGetSetting("dpsMeter.manualDevice");
-      this._populateDeviceDropdown(savedDevice || null);
+      this._loadDeviceDropdown();
     }
   }
 
@@ -3406,7 +3498,9 @@ class DpsApp {
     this.settingsPanel?.classList.remove("isOpen");
   }
 
-  setUserName(name, { persist = false, syncBackend = false } = {}) {
+  // `manual` marks a name the player typed, which the backend accepts even
+  // after the game has named the character (see the name field's handler).
+  setUserName(name, { persist = false, syncBackend = false, manual = false } = {}) {
     const previousName = this.USER_NAME;
     const trimmed = String(name ?? "").trim();
     this.USER_NAME = trimmed;
@@ -3417,9 +3511,12 @@ class DpsApp {
       localStorage.setItem(this.storageKeys.userName, trimmed);
     }
     if (syncBackend) {
-      window.javaBridge?.setCharacterName?.(trimmed);
+      window.javaBridge?.setCharacterName?.(trimmed, manual);
     }
-    if (previousName && previousName !== trimmed) {
+    // A typed correction is not a character switch: the backend has already
+    // put the name on the entity that is you, so keep the fight on screen
+    // rather than resetting it.
+    if (previousName && previousName !== trimmed && !manual) {
       const cachedId = this.getRecentLocalIdForName(trimmed);
       if (cachedId) {
         this.refreshDamageData({ reason: "local name update" });
@@ -3453,9 +3550,6 @@ class DpsApp {
     this.debugLoggingEnabled = !!enabled;
     if (this.debugLoggingCheckbox && document.activeElement !== this.debugLoggingCheckbox) {
       this.debugLoggingCheckbox.checked = this.debugLoggingEnabled;
-    }
-    if (this.characterNameInput) {
-      this.characterNameInput.readOnly = !this.debugLoggingEnabled;
     }
     if (persist) {
       this.safeSetSetting(this.storageKeys.debugLogging, String(this.debugLoggingEnabled));
@@ -3604,6 +3698,7 @@ class DpsApp {
   enterSettingsWindowMode() {
     document.body.classList.add("isSettingsWindow");
     this.refreshMonitorList().then(() => this.initializeSettingsDropdowns());
+    this._loadDeviceDropdown();
     this.settingsPanel?.classList.add("isOpen");
     const close = () => window.javaBridge?.closeSettingsWindow?.();
     this.settingsClose?.addEventListener("click", close);
@@ -3865,8 +3960,10 @@ class DpsApp {
 
   setDisplayMode(mode, { persist = false } = {}) {
     // Ajout XIII NRV : quatre mesures possibles. Cette ligne n'en connaissait que
-    // deux et ramenait silencieusement les autres a « dps ».
-    this.displayMode = DpsApp.MESURES.includes(mode) ? mode : "dps";
+    // deux et ramenait silencieusement les autres a « dps ». Leur « both »
+    // retombe sur « totalDamage » : la seconde valeur de la ligne joue ce role.
+    const demande = mode === "both" ? "totalDamage" : mode;
+    this.displayMode = DpsApp.MESURES.includes(demande) ? demande : "dps";
     if (persist) {
       this.safeSetStorage(this.storageKeys.displayMode, this.displayMode);
     }
@@ -4072,6 +4169,20 @@ class DpsApp {
       return;
     }
 
+    // A name typed in the Settings window. That window already told the
+    // backend; this one only has to stop believing the old name, or it would
+    // push the old one straight back.
+    if (key === this.storageKeys.userName) {
+      const name = String(value ?? "").trim();
+      if (name === this.USER_NAME) return;
+      this.USER_NAME = name;
+      if (this.characterNameInput && document.activeElement !== this.characterNameInput) {
+        this.characterNameInput.value = name;
+      }
+      this.renderCurrentRows();
+      return;
+    }
+
     const selector = REMOTE_APPLIED_SETTING_CONTROLS[key];
     if (!selector) return;
     const control = document.querySelector(selector);
@@ -4115,10 +4226,13 @@ class DpsApp {
       };
     }
     const dps = Number(row?.dps) || 0;
-    return {
-      value: dps,
-      text: `${this.formatDpsThousands(dps)}${this.i18n?.t("meter.dpsSuffix", "/s") ?? "/s"}`,
-    };
+    const dpsText = `${this.formatDpsThousands(dps)}${this.i18n?.t("meter.dpsSuffix", "/s") ?? "/s"}`;
+    if (this.displayMode === "both") {
+      // "408k (13k/s)", as a player asked: damage leads, so the bars follow it.
+      const totalDamage = Number(row?.totalDamage) || 0;
+      return { value: totalDamage, text: `${this.formatAbbreviatedNumber(totalDamage)} (${dpsText})` };
+    }
+    return { value: dps, text: dpsText };
   }
 
   updateMeterTotalBar(rows) {
@@ -4171,7 +4285,9 @@ class DpsApp {
     }
 
     btn.addEventListener("click", () => {
-      menu.style.display = menu.style.display === "none" ? "flex" : "none";
+      // The menu starts hidden by the stylesheet with no inline display, so
+      // test for "open" rather than "closed" or the first click does nothing.
+      menu.style.display = menu.style.display === "flex" ? "none" : "flex";
     });
     document.addEventListener("click", (e) => {
       if (!wrapper.contains(e.target)) menu.style.display = "none";
@@ -4283,8 +4399,13 @@ class DpsApp {
     if (this.localActorIdInput && document.activeElement !== this.localActorIdInput) {
       this.localActorIdInput.value = this.localPlayerId ? String(this.localPlayerId) : "";
     }
-    if (this.characterNameInput) {
-      const nickname = String(info?.characterName || this.USER_NAME || "").trim();
+    // Never under the player's cursor: they may be typing a new name.
+    // This window's own name first: it changes the moment the player saves
+    // one, while the backend's copy here is a poll up to 3 s old and would
+    // put the old name back. The game's name reaches USER_NAME through
+    // syncCharacterNameFromGame, so nothing is lost.
+    if (this.characterNameInput && document.activeElement !== this.characterNameInput) {
+      const nickname = String(this.USER_NAME || info?.characterName || "").trim();
       this.characterNameInput.value = nickname;
     }
     // Do NOT reinitTargetSelection() when the backend-reported local id changes:
@@ -4309,6 +4430,19 @@ class DpsApp {
     if (disabled && this.deviceDropdownMenu) this.deviceDropdownMenu.classList.remove("isOpen");
   }
 
+  // The device list comes from the backend asynchronously, so fill the dropdown
+  // once it has arrived rather than from whatever the cache held at the time.
+  _loadDeviceDropdown() {
+    const populate = () =>
+      this._populateDeviceDropdown(this.safeGetSetting("dpsMeter.manualDevice") || null);
+    const load = window.javaBridge?.loadAvailableDevices?.();
+    if (!load) {
+      populate();
+      return;
+    }
+    load.then(populate, populate);
+  }
+
   _populateDeviceDropdown(currentDevice) {
     if (!this.deviceDropdownBtn || !this.deviceDropdownMenu) return;
     const raw = window.javaBridge?.getAvailableDevices?.();
@@ -4319,7 +4453,11 @@ class DpsApp {
     const connRaw = window.javaBridge?.getConnectionInfo?.();
     const connInfo = typeof connRaw === "string" ? this.safeParseJSON(connRaw, {}) : {};
     const lockedDevice = typeof connInfo?.device === "string" && connInfo.device.trim() ? connInfo.device : "";
-    const selected = this._autoDetectDevice ? (lockedDevice || currentDevice || devices[0]) : (currentDevice || devices[0]);
+    // Unticking auto-detect leaves capture where it is until a device is picked,
+    // so show that device rather than whichever happens to be listed first.
+    const selected = this._autoDetectDevice
+      ? (lockedDevice || currentDevice || devices[0])
+      : (currentDevice || lockedDevice || devices[0]);
     this.deviceDropdownMenu.innerHTML = "";
     options.forEach((opt) => {
       const item = document.createElement("button");
@@ -4519,7 +4657,14 @@ class DpsApp {
     return "XIII NRV METER";
   }
 
-  getTargetLabel({ targetId = 0, targetName = "", targetMode = "" } = {}) {
+  getTargetLabel({ targetId = 0, targetName = "", targetMode = "", dungeonId = 0 } = {}) {
+    // In a party instance the title names the dungeon rather than whatever mob
+    // happens to be selected — it is the more useful heading, and it is stable
+    // across pulls. Falls back to the target label outside a dungeon.
+    const dungeonLabel = Number(dungeonId) > 0
+      ? (this.i18n?.getDungeonLabel?.(Number(dungeonId)) ?? "")
+      : "";
+    if (dungeonLabel) return dungeonLabel;
     if (targetMode === "trainTargets" && !this.isLocalUserIdentified()) {
       return this.i18n?.t("target.identifying", "Identifying you...") ?? "Identifying you...";
     }
@@ -4577,6 +4722,7 @@ class DpsApp {
       targetMode: this.lastTargetMode,
       targetId: this.lastTargetId,
       targetName: this.lastTargetName,
+      dungeonId: this.lastDungeonId,
     });
     this.elBossName.classList.toggle("isAllTargets", this.lastTargetMode === "allTargets");
   }
@@ -4748,6 +4894,76 @@ class DpsApp {
 
     document.addEventListener("mousemove", onMouseMove);
     document.addEventListener("mouseup", onMouseUp);
+  }
+
+  // ===== Click-through lock =====
+  // Locked, the overlay lets clicks through to the game and cannot be
+  // dragged; only its lock button stays clickable (the backend watches the
+  // pointer, see OverlayLock in app.rs), and a hotkey toggles it too. Offered
+  // only where the backend can do that: Windows, not Wayland.
+
+  initOverlayLock() {
+    this._overlayLocked = false;
+    this.showLockBtnCheckbox = document.querySelector(".showLockBtnCheckbox");
+    const isOverlay = window.A2_VIEW === "main";
+    Promise.resolve(window.javaBridge?.overlayLockSupported?.())
+      .then((supported) => {
+        if (!supported) return;
+        document.querySelectorAll(".lockSetting").forEach((el) => { el.style.display = ""; });
+        const show = this.safeGetSetting(this.storageKeys.showLockBtn) === "true";
+        if (this.showLockBtnCheckbox) {
+          this.showLockBtnCheckbox.checked = show;
+          this.showLockBtnCheckbox.addEventListener("change", (event) => {
+            const isChecked = !!event.target?.checked;
+            this.safeSetSetting(this.storageKeys.showLockBtn, String(isChecked));
+            if (!isOverlay) return;
+            this._applyLockBtnVisibility(isChecked);
+            // Hiding the button must not leave a locked overlay behind.
+            if (!isChecked) this._setOverlayLocked(false);
+          });
+        }
+        if (!isOverlay) return;
+        this._applyLockBtnVisibility(show);
+        window.addEventListener("resize", () => this._sendLockBtnRect());
+        // Stay locked across restarts, as the player left it.
+        if (show && this.safeGetSetting(this.storageKeys.overlayLocked) === "true") {
+          requestAnimationFrame(() => this._setOverlayLocked(true));
+        }
+      })
+      .catch(() => {});
+  }
+
+  _applyLockBtnVisibility(show) {
+    if (this.lockBtn) this.lockBtn.style.display = show ? "" : "none";
+    this.headerBtns?.classList.toggle("hasLockBtn", !!show);
+    if (show) requestAnimationFrame(() => this._sendLockBtnRect());
+  }
+
+  // Where the button is, so the backend keeps it clickable while locked.
+  _sendLockBtnRect() {
+    if (!this.lockBtn || this.lockBtn.style.display === "none") return;
+    const r = this.lockBtn.getBoundingClientRect();
+    if (!r.width || !r.height) return;
+    window.javaBridge?.setLockButtonRect?.(r.left, r.top, r.width, r.height, window.devicePixelRatio || 1);
+  }
+
+  _setOverlayLocked(locked) {
+    this._sendLockBtnRect();
+    window.javaBridge?.setOverlayLocked?.(!!locked);
+    this._onOverlayLockChanged(!!locked);
+  }
+
+  // Also called when the hotkey toggled the lock (the backend has done it).
+  _onOverlayLockChanged(locked) {
+    this._overlayLocked = !!locked;
+    this.safeSetSetting(this.storageKeys.overlayLocked, String(this._overlayLocked));
+    document.body.classList.toggle("overlayLocked", this._overlayLocked);
+    if (!this.lockBtn) return;
+    this.lockBtn.classList.toggle("isLocked", this._overlayLocked);
+    const icon = document.createElement("i");
+    icon.setAttribute("data-lucide", this._overlayLocked ? "lock" : "lock-open");
+    this.lockBtn.replaceChildren(icon);
+    window.lucide?.createIcons?.({ root: this.lockBtn });
   }
 
   _applySuspendBtnVisibility(show) {

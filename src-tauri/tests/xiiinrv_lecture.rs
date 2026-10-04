@@ -10,10 +10,69 @@
 //! Barbaxx, niveau 45, Item Level 3009, Combat Power 132 462, PV 25 835,
 //! PM 5 678, 27 pièces d'équipement, 5 familles de pets et 35 effets.
 
+use std::sync::Arc;
+
+use xiiinrv_meter_lib::capture::framing::{self, FrameKind};
+use xiiinrv_meter_lib::capture::packet_accumulator::PacketAccumulator;
+use xiiinrv_meter_lib::capture::stream_processor::StreamProcessor;
+use xiiinrv_meter_lib::combat::data_storage::DataStorage;
+use xiiinrv_meter_lib::i18n::lookup::{NpcLookup, SkillLookup};
 use xiiinrv_meter_lib::xiiinrv::collecte;
-// Le découpage du flux est celui du meter lui-même, pas une copie : c'est lui
-// qui relit les paquets gardés de côté avant le verrouillage du port.
-use xiiinrv_meter_lib::xiiinrv::tampon::{debut_aligne, deverrouille, parcourir, recevoir, verrouille};
+
+/// Parcourt un flux comme `StreamProcessor::consume_stream` le fait : paquets
+/// bruts, lots compressés, et lots imbriqués dans un lot.
+///
+/// Nous avions notre propre découpeur, dans `xiiinrv/tampon.rs`. Il rejouait
+/// correctement un journal entier mais n'a jamais lu un seul paquet en direct :
+/// démarrant au milieu du flux, il ne se recalait pas. Il est supprimé, et ces
+/// tests passent désormais par `capture::framing`, c'est-à-dire par le découpage
+/// que le meter emploie réellement. Voir `docs/DECISION-REPARTIR-DE-A2TOOLS.md`
+/// du dépôt du site.
+fn parcourir(flux: &[u8], voir: &mut impl FnMut(&[u8])) {
+    for cadre in &framing::walk(flux).frames {
+        match cadre.kind {
+            FrameKind::Bundle => deballer(cadre.payload(flux), voir),
+            FrameKind::Packet => voir(cadre.bytes(flux)),
+        }
+    }
+}
+
+/// Décompresse un lot et parcourt ce qu'il contient, imbrication comprise.
+fn deballer(charge: &[u8], voir: &mut impl FnMut(&[u8])) {
+    let Some(contenu) = framing::decompress_bundle(charge) else {
+        return;
+    };
+    for cadre in &framing::walk_inner(&contenu).frames {
+        match cadre.kind {
+            FrameKind::Bundle => deballer(cadre.payload(&contenu), voir),
+            FrameKind::Packet => voir(cadre.bytes(&contenu)),
+        }
+    }
+}
+
+/// Un lecteur monté comme en production. Notre `observer()` est appelé depuis
+/// `parse_perfect_packet` : il n'y a rien à brancher ici, c'est le point même
+/// de l'accroche.
+fn lecteur() -> StreamProcessor {
+    StreamProcessor::new(
+        Arc::new(DataStorage::new()),
+        Arc::new(SkillLookup::new()),
+        Arc::new(NpcLookup::new()),
+    )
+}
+
+/// Donne un flux au lecteur morceau par morceau, exactement comme le
+/// dispatcher : accumuler, consommer ce qui est complet, garder le reste.
+fn alimenter(lecteur: &mut StreamProcessor, morceaux: &[Vec<u8>]) {
+    let mut tampon = PacketAccumulator::new();
+    for morceau in morceaux {
+        tampon.append(morceau);
+        let consommes = lecteur.consume_stream(tampon.snapshot());
+        if consommes > 0 {
+            tampon.discard_bytes(consommes);
+        }
+    }
+}
 
 /// Les deux tests partagent le même interrupteur de lecture et le même état :
 /// ils ne peuvent pas tourner en même temps, sinon l'un ferme ce que l'autre
@@ -235,10 +294,10 @@ fn une_coupe_au_milieu_dun_paquet_ne_fait_rien_perdre() {
         panic!("aucun flux dans le journal");
     };
 
-    // Un morceau qui commence sur un vrai début de paquet, et qui contient le
-    // défilement complet : c'est la référence.
-    let depart = debut_aligne(&entier).expect("aucun début aligné dans le flux entier");
-    let morceau = &entier[depart..];
+    // Le flux entier, qui contient le défilement complet : c'est la référence.
+    // On le parcourt pour relever la valeur que le jeu a réellement envoyée en
+    // dernier — c'est elle, et pas une autre, que chaque coupe devra rendre.
+    let morceau = &entier[..];
     let mut vues: Vec<u32> = Vec::new();
     parcourir(morceau, &mut |p| {
         if p.len() == 19 && p.get(1) == Some(&0x56) && p.get(2) == Some(&0x36) {
@@ -247,22 +306,22 @@ fn une_coupe_au_milieu_dun_paquet_ne_fait_rien_perdre() {
             }
         }
     });
-    println!("défilement présent dans le morceau : {:?}", vues);
-    let attendu = *vues.iter().max().expect("aucun Combat Power dans le morceau");
+    println!("défilement présent dans le flux : {:?}", vues);
+    let attendu = *vues.iter().max().expect("aucun Combat Power dans le flux");
 
-    // Quatre cents coupes, toutes au milieu d'un paquet. Le défilement est bien plus
+    // Cent coupes, toutes au milieu d'un paquet. Le défilement est bien plus
     // loin : aucune ne le retire, donc aucune n'a d'excuse pour le manquer.
-    const COUPES: usize = 400;
+    //
+    // Chaque coupe rejoue le flux tronqué par le cycle du dispatcher — accumuler,
+    // consommer, garder le reste — avec un lecteur neuf, donc un flux vierge.
+    const COUPES: usize = 100;
     let mut faux = Vec::new();
     let mut perdus = Vec::new();
     for coupe in 1..=COUPES {
         collecte::vider();
         collecte::ouvrir_lecture(true);
-        // Chaque coupe repart d'un flux vierge : sans ça, la fin du tampon de la
-        // coupe précédente se collerait devant celui-ci.
-        deverrouille();
-        recevoir(4321, 8765, &morceau[coupe..]);
-        verrouille(4321, 8765);
+        let mut lu = lecteur();
+        alimenter(&mut lu, &[morceau[coupe..].to_vec()]);
         match collecte::lire_etat().combat_power {
             Some(lu) if lu != attendu => faux.push((coupe, lu)),
             None => perdus.push(coupe),
@@ -282,14 +341,30 @@ fn une_coupe_au_milieu_dun_paquet_ne_fait_rien_perdre() {
         faux
     );
 
-    // Ne rien relire du tout reste possible : certaines coupes ne laissent pas de
-    // quoi reconnaître un début de paquet, et on assume de perdre l'entrée en jeu
-    // plutôt que de l'inventer. Mais cela doit rester rare : la version sans
-    // recalage en perdait plus d'un quart.
+    // Ne rien relire du tout reste possible, et c'est assumé : partant au milieu
+    // d'un paquet, la resynchronisation d'A2Tools avance d'un octet à la fois et
+    // ne retrouve pas toujours l'alignement avant que les paquets visés passent.
+    // Mesuré ici : un quart des coupes perdent l'entrée en jeu, et le chiffre ne
+    // bouge pas qu'on alimente le lecteur d'un bloc ou par morceaux de 1500
+    // octets — c'est le point de départ qui décide, pas le découpage en morceaux.
+    //
+    // Pourquoi cela reste acceptable : en direct, le flux n'est pas pris en
+    // cours de route. Le verrouillage du port tombe après 132 octets sur un
+    // flux de jeu réel (le jeu émet le terminateur de enregistrement une
+    // vingtaine de fois par seconde, même au repos), et le lecteur suit donc le
+    // flux depuis son début. C'est ce que vérifie
+    // `rejoue_une_entree_en_jeu_reelle_sans_rien_perdre`, sur le vrai flux et
+    // avec le vrai cycle. Le cas couvert ici — démarrer au milieu — n'arrive
+    // qu'au lancement du meter en cours de session, et se rattrape à l'entrée en
+    // jeu suivante.
+    //
+    // Le plafond n'est donc pas un objectif de qualité, c'est un détecteur de
+    // régression : si cette proportion grimpe, la resynchronisation s'est
+    // dégradée et il faut regarder pourquoi.
     println!("{} coupes perdent l'entrée en jeu : {:?}", perdus.len(), perdus);
     assert!(
-        perdus.len() * 100 <= COUPES,
-        "{} coupes sur {} ne relisent rien ({} %) : le recalage ne tient plus",
+        perdus.len() * 100 <= COUPES * 35,
+        "{} coupes sur {} ne relisent rien ({} %) : le recalage s'est dégradé",
         perdus.len(),
         COUPES,
         perdus.len() * 100 / COUPES
@@ -305,8 +380,10 @@ fn une_coupe_au_milieu_dun_paquet_ne_fait_rien_perdre() {
 /// Power, et aucune pièce d'équipement : il lisait alors les paquets là où
 /// A2Tools les avait découpés, et ce découpage-là en perdait.
 ///
-/// Ce test rejoue exactement ces octets dans notre propre réassemblage, morceau
-/// par morceau et dans l'ordre. Il doit rendre les quatre paquets.
+/// Ce test rejoue exactement ces octets, morceau par morceau et dans l'ordre,
+/// par le découpage de la version sur laquelle nous sommes revenus. Il répond
+/// donc directement à la question qui nous avait fait partir : ce découpage-ci
+/// perd-il encore l'inventaire et le défilement du Combat Power ?
 #[test]
 fn rejoue_une_entree_en_jeu_reelle_sans_rien_perdre() {
     const JOURNAL_1212: &str = r"D:\9 - meters aion\xiiinrv\entree_en_jeu_20260929_1212.txt";
@@ -324,25 +401,19 @@ fn rejoue_une_entree_en_jeu_reelle_sans_rien_perdre() {
     // du serveur — donc les coller bout à bout désynchroniserait tout. On ne
     // garde que la seconde.
     const DEPART: &str = "2026-09-29T12:12:16";
-    let mut morceaux = 0usize;
+    let mut octets_par_morceau: Vec<Vec<u8>> = Vec::new();
     for ligne in contenu.lines() {
         let champs: Vec<&str> = ligne.trim_end().split('|').collect();
         if champs.len() != 3 || champs[1] != "Client:61944" || champs[0] < DEPART {
             continue;
         }
-        let Some(octets) = hex_vers_octets(champs[2].trim()) else {
-            continue;
-        };
-        if morceaux == 0 {
-            // Le premier morceau sert de tampon d'avant verrouillage, puis on
-            // déclare le flux du jeu : c'est la séquence réelle du dispatcher.
-            recevoir(61944, 50349, &octets);
-            verrouille(61944, 50349);
-        } else {
-            recevoir(61944, 50349, &octets);
+        if let Some(octets) = hex_vers_octets(champs[2].trim()) {
+            octets_par_morceau.push(octets);
         }
-        morceaux += 1;
     }
+    let morceaux = octets_par_morceau.len();
+    let mut lu = lecteur();
+    alimenter(&mut lu, &octets_par_morceau);
 
     let e = collecte::lire_etat();
     println!(

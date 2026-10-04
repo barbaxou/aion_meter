@@ -5,7 +5,9 @@
       "dps": "DPS",
       "total": "DMG",
       "ariaDps": "显示 DPS",
-      "ariaDamage": "显示总伤害"
+      "ariaDamage": "显示总伤害",
+      "both": "两者",
+      "ariaBoth": "显示 DPS 和总伤害"
     }
   },
   "details": {
@@ -122,7 +124,12 @@
     "previewUpload": "预览上传内容",
     "previewUploadTip": "把分享这场战斗时会上传的内容写成文件。不会发送。",
     "previewWorking": "正在生成预览…",
-    "previewDone": "已写入 {slice} KB（压缩后 {sent} KB，即实际上传大小）。在 {seen} 个数据包中保留 {kept} 个，已遮蔽 {blinded} 个名称。没有上传任何内容。保存于 {dir}"
+    "previewDone": "已写入 {slice} KB（压缩后 {sent} KB，即实际上传大小）。在 {seen} 个数据包中保留 {kept} 个，已遮蔽 {blinded} 个名称。没有上传任何内容。保存于 {dir}",
+    "uploadTip": "将这场战斗上传到 a2tools.app 并获取分享链接",
+    "uploadOpen": "在 a2tools.app 打开这场战斗的记录",
+    "uploadWorking": "上传中…",
+    "uploadDonePublic": "已上传。链接已复制：{url}",
+    "uploadDonePrivate": "已以私密方式上传。链接已复制：{url}"
   },
   "settings": {
     "title": "设置",
@@ -174,6 +181,7 @@
     "roundDps": "DPS取整",
     "autoHideMeter": "自动隐藏面板",
     "showSuspendBtn": "显示暂停按钮",
+    "showLockBtn": "显示锁定按钮（点击穿透）",
     "playerLimit": {
       "label": "最大显示人数"
     },
@@ -243,7 +251,8 @@
       "reload": "重新加载数据",
       "toggle": "显示/隐藏窗口",
       "pressKeys": "请按下按键...",
-      "needModifiers": "需要2个以上修饰键"
+      "needModifiers": "需要2个以上修饰键",
+      "lock": "锁定/解锁悬浮窗"
     },
     "defaultMeterMode": {
       "label": "默认计量模式"
@@ -268,7 +277,9 @@
       "codeHint": "页面应该已经打开。代码将在 10 分钟后失效。",
       "working": "等待确认…",
       "failed": "登录失败：{error}",
-      "supporter": "赞助者"
+      "supporter": "赞助者",
+      "autoUpload": "自动上传首领战",
+      "autoUploadHint": "首领战结束时会以你在 a2tools.app 选择的公开设置上传到你的账号。其他玩家的名称会被遮蔽。木桩战斗不会上传。"
     }
   },
   "support": {

@@ -12,9 +12,9 @@
 
 use std::sync::Arc;
 
-use a2tools_dps_meter_lib::capture::stream_processor::StreamProcessor;
-use a2tools_dps_meter_lib::combat::data_storage::DataStorage;
-use a2tools_dps_meter_lib::i18n::lookup::{NpcLookup, SkillLookup};
+use xiiinrv_meter_lib::capture::stream_processor::StreamProcessor;
+use xiiinrv_meter_lib::combat::data_storage::DataStorage;
+use xiiinrv_meter_lib::i18n::lookup::{NpcLookup, SkillLookup};
 
 /// `<len varint> 41 36 <entity_id u8 varint> <mask> <subtree gate> <len><name>`
 ///

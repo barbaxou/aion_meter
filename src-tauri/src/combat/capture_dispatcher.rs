@@ -46,6 +46,59 @@ const TLS_VERSIONS: [u8; 5] = [0x00, 0x01, 0x02, 0x03, 0x04];
 const WINDOW_CHECK_STOPPED_MS: i64 = 10_000;
 const WINDOW_CHECK_RUNNING_MS: i64 = 60_000;
 const STALE_CONNECTION_MS: i64 = 120_000;
+/// While no port is locked, how often to log what the capture is seeing. Before
+/// the lock every gate is silent, so without this a meter that never locks
+/// leaves a log that cannot say why.
+const UNLOCKED_REPORT_MS: i64 = 30_000;
+
+/// Per-device packet counts while unlocked, for the periodic report. It is
+/// written when a packet arrives, so a capture that sees nothing at all stays
+/// silent; the device list at startup covers that case.
+#[derive(Default)]
+struct UnlockedStats {
+    /// device -> (packets, packets carrying a combat signature)
+    by_device: HashMap<String, (u64, u64)>,
+    /// Packets dropped because no AION2 window was found.
+    no_window: u64,
+}
+
+impl UnlockedStats {
+    fn note(&mut self, cap: &CapturedPayload) {
+        let device = cap.device_name.clone().unwrap_or_else(|| "?".into());
+        let entry = self.by_device.entry(device).or_default();
+        entry.0 += 1;
+        if contains_any(&cap.data, &COMBAT_SIGNATURES) {
+            entry.1 += 1;
+        }
+    }
+
+    fn report(&self, window_found: bool) -> String {
+        let mut devices: Vec<_> = self.by_device.iter().collect();
+        devices.sort_by(|a, b| b.1 .0.cmp(&a.1 .0));
+        let mut out = format!(
+            "Not locked yet (last {} s): AION2 window {}",
+            UNLOCKED_REPORT_MS / 1000,
+            if window_found { "found" } else { "NOT found" }
+        );
+        if self.no_window > 0 {
+            out += &format!(", {} packets ignored for that", self.no_window);
+        }
+        if !window_found {
+            // What might have been the game, so the next log says why it was
+            // not recognised (a localised title, a launcher, ...).
+            let candidates = window_detector::describe_candidates();
+            if candidates.is_empty() {
+                out += " (no window or program mentions \"aion\")";
+            } else {
+                out += &format!(" (look-alikes: {})", candidates.join(" | "));
+            }
+        }
+        for (device, (packets, marked)) in devices.iter().take(8) {
+            out += &format!("; {}: {} packets, {} with game markers", device, packets, marked);
+        }
+        out
+    }
+}
 
 fn now_ms() -> i64 {
     SystemTime::now()
@@ -88,8 +141,11 @@ impl CaptureDispatcher {
         self.dot_skill_ids = ids;
     }
 
-    pub fn set_suspended(&self, suspended: bool) {
-        self.suspended.store(suspended, Ordering::SeqCst);
+    /// Share the "suspended" switch with whoever flips it (the header's
+    /// suspend button, through `suspend_capture`). While it is on, captured
+    /// packets are dropped, so nothing is counted and the fight timer stops.
+    pub fn use_suspend_flag(&mut self, flag: Arc<AtomicBool>) {
+        self.suspended = flag;
     }
 
     /// Run the dispatch loop, consuming packets from the channel.
@@ -101,6 +157,9 @@ impl CaptureDispatcher {
         let mut sig_hits: HashMap<(u16, u16), (u32, i64)> = HashMap::new();
         let mut last_window_check_ms: i64 = 0;
         let mut is_aion_running = false;
+        let mut window_logged: Option<bool> = None;
+        let mut unlocked_stats = UnlockedStats::default();
+        let mut last_unlocked_report_ms = now_ms();
 
         while let Some(cap) = receiver.recv().await {
             if self.suspended.load(Ordering::SeqCst) {
@@ -112,16 +171,40 @@ impl CaptureDispatcher {
             let interval = if is_aion_running { WINDOW_CHECK_RUNNING_MS } else { WINDOW_CHECK_STOPPED_MS };
             if now - last_window_check_ms >= interval {
                 last_window_check_ms = now;
-                let running = window_detector::find_aion2_window();
+                let title = window_detector::find_aion2_window_title();
+                let running = title.is_some();
+                if window_logged != Some(running) {
+                    match &title {
+                        Some(t) => info!("AION2 window found: {:?}", t),
+                        None => info!(
+                            "No AION2 window found (looking for a title starting with \"AION2\", or a window owned by AION2.exe); packets are ignored until there is one"
+                        ),
+                    }
+                    window_logged = Some(running);
+                }
                 if !running && is_aion_running {
                     self.port_detector.reset();
-                    // Ajout XIII NRV : la connexion au jeu est tombée, on cesse de la suivre.
-                    crate::xiiinrv::deverrouille();
                     self.ping_tracker.reset();
                     assemblers.clear();
                     sig_hits.clear();
                 }
                 is_aion_running = running;
+            }
+
+            // While unlocked, count what arrives on each device and report it
+            // now and then, so a log from a meter that never locks says why.
+            if self.port_detector.current_port().is_none() {
+                unlocked_stats.note(&cap);
+                if !is_aion_running {
+                    unlocked_stats.no_window += 1;
+                }
+                if now - last_unlocked_report_ms >= UNLOCKED_REPORT_MS {
+                    info!("{}", unlocked_stats.report(is_aion_running));
+                    unlocked_stats = UnlockedStats::default();
+                    last_unlocked_report_ms = now;
+                }
+            } else {
+                last_unlocked_report_ms = now;
             }
 
             if !is_aion_running {
@@ -134,8 +217,6 @@ impl CaptureDispatcher {
                 if last_parsed > 0 && now - last_parsed > STALE_CONNECTION_MS {
                     info!("No packets parsed for {}ms, resetting lock", now - last_parsed);
                     self.port_detector.reset();
-                    // Ajout XIII NRV : la connexion au jeu est tombée, on cesse de la suivre.
-                    crate::xiiinrv::deverrouille();
                     self.ping_tracker.reset();
                     assemblers.clear();
                     sig_hits.clear();
@@ -169,9 +250,9 @@ impl CaptureDispatcher {
             }
 
             // Feed to ping tracker — also marks connection alive to prevent stale reset
-            if current_port.is_some() {
+            if let Some(port) = current_port {
                 let had_ping_before = self.ping_tracker.current_ping_ms();
-                self.ping_tracker.on_packet(&cap);
+                self.ping_tracker.on_packet(&cap, port);
                 let has_ping_now = self.ping_tracker.current_ping_ms();
                 // If a new ping was received, mark the connection as active
                 if has_ping_now != had_ping_before {
@@ -194,25 +275,15 @@ impl CaptureDispatcher {
                 continue;
             }
 
-            // Ajout XIII NRV : notre lecture ne passe plus par le réassemblage
-            // d'A2Tools. Le 29/09/2026 le journal des paquets a montré qu'il
-            // perdait, sur une même entrée en jeu, l'inventaire complet et deux
-            // des trois paquets du Combat Power, là où notre propre découpeur
-            // rendait les quatre. On reçoit donc les morceaux bruts.
-            //
-            // **Un seul appel, et il doit le rester.** Il y en a eu deux pendant
-            // une journée : un dans le bloc d'avant verrouillage et celui-ci.
-            // Les morceaux portant une signature de combat étaient alors ajoutés
-            // **deux fois** au tampon, ce qui désynchronisait le découpage à coup
-            // sûr et faisait perdre l'inventaire de l'entrée en jeu.
-            crate::xiiinrv::recevoir(cap.src_port, cap.dst_port, &cap.data);
-
             if unlocked && !contains_any(&cap.data, &COMBAT_SIGNATURES) {
                 continue;
             }
 
             // Log raw packet if packet logging is enabled
             crate::logging::logger::log_packet(&cap);
+            // And keep it in memory for a while, so a boss fight can be shared
+            // without packet logging having been on. See `share::ring`.
+            crate::share::ring::record(cap.src_port, &cap.data);
 
             // Get or create assembler
             let a = cap.src_port.min(cap.dst_port);
@@ -263,16 +334,6 @@ impl CaptureDispatcher {
                 unlocked && sig_hits.get(&key).map(|(c, _)| *c).unwrap_or(0) >= SIGNATURE_LOCK_THRESHOLD;
             if signature_locked && self.port_detector.current_port().is_none() {
                 self.port_detector.confirm_candidate(cap.src_port, cap.dst_port, cap.device_name.as_deref());
-                // Ajout XIII NRV : on lit ce qu'on avait gardé de côté — l'inventaire
-                // et le Combat Power de l'entrée en jeu y sont — puis on suit ce
-                // flux. Mais seulement s'il a **vraiment** été verrouillé :
-                // `confirm_candidate` est aussi appelé pour des candidats qui ne le
-                // deviennent pas. Le 29/09 trois flux ont été déclarés coup sur
-                // coup (10216, 18237, puis 61944) ; chacun écrasait le précédent et
-                // seul l'ordre d'arrivée a fait qu'on a suivi le bon.
-                if self.port_detector.current_port() == Some(cap.src_port) {
-                    crate::xiiinrv::verrouille(cap.src_port, cap.dst_port);
-                }
                 // On lock, GC the orphaned candidate assemblers (the relay's
                 // duplicate external flows) so only the locked flow is processed.
                 if self.port_detector.current_port().is_some() {
@@ -310,5 +371,38 @@ fn device_matches(locked: &str, packet_device: Option<&str>) -> bool {
     match packet_device {
         Some(d) if !d.trim().is_empty() => d.trim().eq_ignore_ascii_case(locked),
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cap(device: &str, data: &[u8]) -> CapturedPayload {
+        CapturedPayload {
+            src_port: 1,
+            dst_port: 2,
+            data: data.to_vec(),
+            device_name: Some(device.into()),
+            captured_at_ms: 0,
+            src_ip: None,
+            dst_ip: None,
+            tcp_seq: 0,
+            tcp_ack: 0,
+        }
+    }
+
+    #[test]
+    fn unlocked_report_names_each_device_and_the_window() {
+        let mut stats = UnlockedStats::default();
+        stats.note(&cap("NordLynx Tunnel", &[0x0E, 0x00, 0x36, 0x01]));
+        stats.note(&cap("NordLynx Tunnel", &[0x01, 0x02]));
+        stats.note(&cap("Realtek", &[0x01]));
+        stats.no_window = 3;
+        let line = stats.report(false);
+        assert!(line.contains("AION2 window NOT found, 3 packets ignored for that"), "{line}");
+        assert!(line.contains("NordLynx Tunnel: 2 packets, 1 with game markers"), "{line}");
+        assert!(line.contains("Realtek: 1 packets, 0 with game markers"), "{line}");
+        assert!(line.find("NordLynx").unwrap() < line.find("Realtek").unwrap(), "busiest first");
     }
 }

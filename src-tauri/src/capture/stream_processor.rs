@@ -1,7 +1,6 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use lz4_flex::decompress;
 
 use crate::combat::data_storage::DataStorage;
 use crate::entity::damage_packet::ParsedDamagePacket;
@@ -102,68 +101,35 @@ impl StreamProcessor {
 
     /// Set an override timestamp for all packets created by this processor.
     /// Used in replay mode to use capture-time timestamps instead of wall clock.
+    ///
+    /// This also pins the thread's clock (`crate::clock`), because the processor
+    /// is not the only thing that reads "now" while consuming a packet:
+    /// `DataStorage` makes idle-reset and zone-reset decisions against it. Those
+    /// used to be taken against the replaying machine's wall clock, so a replay
+    /// of the same capture could produce different fights depending on when it
+    /// was run. The override is thread-local, so a replay on a blocking thread
+    /// cannot disturb a live capture running alongside it.
     pub fn set_override_timestamp(&mut self, ts: Option<i64>) {
         self.override_timestamp = ts;
+        crate::clock::set_override(ts);
     }
 
     /// Parse as many complete packets as possible from the buffer.
     /// Returns the number of bytes consumed.
     pub fn consume_stream(&mut self, buffer: &[u8]) -> usize {
-        let mut offset = 0;
+        // Framing lives in `capture::framing` so the Evidence Slice builder can
+        // split a capture the same way this does. See that module.
+        let framing = super::framing::walk(buffer);
+        let offset = framing.consumed;
 
-        while offset < buffer.len() {
-            // 1. Skip zero padding
-            if buffer[offset] == 0x00 {
-                offset += 1;
-                continue;
-            }
-
-            let length_info = read_varint(buffer, offset);
-            if length_info.length <= 0 || length_info.value <= 0 {
-                if offset + 5 > buffer.len() {
-                    break;
+        for frame in &framing.frames {
+            match frame.kind {
+                super::framing::FrameKind::Bundle => {
+                    self.unwrap_bundle(frame.payload(buffer));
                 }
-                offset += 1;
-                continue;
-            }
-
-            // 2. AION 2 quirk: length - 3 == physical size
-            let total_packet_bytes = (length_info.value - 3) as usize;
-
-            // Resync on invalid sizes
-            if total_packet_bytes == 0 || total_packet_bytes > 65535 {
-                offset += 1;
-                continue;
-            }
-
-            // 3. TCP fragmentation check (anti-stall gate)
-            if offset + total_packet_bytes > buffer.len() {
-                if total_packet_bytes > 16384 {
-                    offset += 1;
-                    continue;
+                super::framing::FrameKind::Packet => {
+                    self.parse_perfect_packet(frame.bytes(buffer));
                 }
-                break; // Legitimate fragment
-            }
-
-            // 4. Check for FF FF compressed bundle
-            let payload_start = length_info.length as usize;
-            let is_bundle = offset + total_packet_bytes <= buffer.len()
-                && payload_start + 1 < total_packet_bytes
-                && buffer[offset + payload_start] == 0xFF
-                && buffer[offset + payload_start + 1] == 0xFF;
-
-            if is_bundle {
-                let bundle_size = total_packet_bytes + 1;
-                if offset + bundle_size > buffer.len() {
-                    break;
-                }
-                let bundle_payload = &buffer[offset + payload_start..offset + bundle_size];
-                self.unwrap_bundle(bundle_payload);
-                offset += bundle_size;
-            } else {
-                let full_packet = &buffer[offset..offset + total_packet_bytes];
-                self.parse_perfect_packet(full_packet);
-                offset += total_packet_bytes;
             }
         }
 
@@ -204,65 +170,29 @@ impl StreamProcessor {
             return;
         }
 
-        let decompressed_size = u32::from_le_bytes([
-            payload[2], payload[3], payload[4], payload[5],
-        ]) as usize;
-
-        if decompressed_size == 0 || decompressed_size > 1_000_000 {
-            return;
-        }
-
-        let compressed = &payload[6..];
-        let decompressed = match decompress(compressed, decompressed_size) {
-            Ok(d) => d,
-            Err(_) => return,
+        let decompressed = match super::framing::decompress_bundle(payload) {
+            Some(d) => d,
+            None => return,
         };
 
-        // Walk decompressed data as varint-framed inner packets
+        // Walk decompressed data as varint-framed inner packets. The walk lives
+        // in `capture::framing` so the Evidence Slice builder splits a bundle
+        // exactly the way this does.
         self.pending_compact_skill_context = None;
-        let mut offset = 0;
 
-        while offset < decompressed.len() {
-            if decompressed[offset] == 0x00 {
-                offset += 1;
-                continue;
-            }
-
-            let length_info = read_varint(&decompressed, offset);
-            if length_info.length <= 0 || length_info.value <= 0 {
-                break;
-            }
-
-            if length_info.value <= 3 {
-                offset += 1;
-                continue;
-            }
-            let inner_total_bytes = (length_info.value - 3) as usize;
-
-            let inner_packet_end = offset + inner_total_bytes;
-            if inner_packet_end > decompressed.len() {
-                break;
-            }
-
-            let inner_packet = &decompressed[offset..inner_packet_end];
-
-            // Check for nested FF-FF bundle
-            let inner_payload_start = length_info.length as usize;
-            let is_nested_bundle = inner_packet.len() > inner_payload_start + 1
-                && inner_packet[inner_payload_start] == 0xFF
-                && inner_packet[inner_payload_start + 1] == 0xFF;
-
-            if is_nested_bundle {
-                let nested_payload = &inner_packet[inner_payload_start..];
-                self.unwrap_bundle(nested_payload);
-            } else {
-                if let Some(ctx) = self.extract_pending_compact_skill_context(inner_packet) {
-                    self.pending_compact_skill_context = Some(ctx);
+        for frame in &super::framing::walk_inner(&decompressed).frames {
+            match frame.kind {
+                super::framing::FrameKind::Bundle => {
+                    self.unwrap_bundle(frame.payload(&decompressed));
                 }
-                self.parse_perfect_packet(inner_packet);
+                super::framing::FrameKind::Packet => {
+                    let inner_packet = frame.bytes(&decompressed);
+                    if let Some(ctx) = self.extract_pending_compact_skill_context(inner_packet) {
+                        self.pending_compact_skill_context = Some(ctx);
+                    }
+                    self.parse_perfect_packet(inner_packet);
+                }
             }
-
-            offset += inner_total_bytes;
         }
 
         // Scan for embedded 04 8D and 40 36 in decompressed data
@@ -281,6 +211,18 @@ impl StreamProcessor {
             return false;
         }
 
+        // Ajout XIII NRV : on regarde passer les quatre paquets de la fiche de
+        // personnage. Ne modifie rien, ne bloque rien, et ne fait rien du tout
+        // tant qu'aucun jeton n'est renseigné.
+        //
+        // C'est le seul point de passage de tout paquet complet : les paquets
+        // bruts arrivent ici depuis `consume_stream`, et ceux des lots
+        // compressés depuis `unwrap_bundle`, imbrication comprise. Nous avions
+        // quitté cette accroche le 29/09/2026 pour réassembler le flux
+        // nous-mêmes ; notre réassemblage n'a jamais lu un seul paquet en
+        // direct (2 h 15 d'enregistrement, zéro sur quatre) et nous y revenons.
+        // Voir `docs/DECISION-REPARTIR-DE-A2TOOLS.md` du dépôt du site.
+        crate::xiiinrv::observer(packet);
 
         let parsed_damage = self.parsing_damage(packet, true, false);
         let parsed_ownership = self.parse_summon_ownership_packet(packet);
@@ -662,74 +604,63 @@ impl StreamProcessor {
                 continue;
             }
 
-            // Scan for E0/E2 07 anchor
+            // The owner follows: `<owner varint> <server id u16 LE> <len><name>`.
+            // The server id was once matched as the literal bytes `E0 07` /
+            // `E2 07` (servers 2016 and 2018), which skipped every other server:
+            // a Sorcerer on Ventus (1305, bytes `19 05`) never got a name. Any id
+            // in the servers' 1000–2999 range is accepted now, and a candidate
+            // only counts when the owner id sits wholly after the fixed field and
+            // the whole name field is a name.
             let after_fixed = fixed_field_start + 4;
-            let scan_end = std::cmp::min(data.len() - 1, after_fixed + 128);
-            let mut anchor_idx = None;
-            for i in after_fixed..scan_end {
-                if (data[i] == 0xE0 || data[i] == 0xE2) && data[i + 1] == 0x07 {
-                    anchor_idx = Some(i);
+            let scan_end = std::cmp::min(data.len().saturating_sub(2), after_fixed + 128);
+            let mut found = None;
+            for server_idx in after_fixed + 1..scan_end {
+                let server_id = u16::from_le_bytes([data[server_idx], data[server_idx + 1]]);
+                if !(1000..=2999).contains(&server_id) {
+                    continue;
+                }
+                let owner_id = (1..=3usize).find_map(|v_len| {
+                    let v_start = server_idx.checked_sub(v_len)?;
+                    if v_start < after_fixed || !can_read_varint(data, v_start) {
+                        return None;
+                    }
+                    let v = read_varint(data, v_start);
+                    (v.length == v_len as i32 && (100..=99_999).contains(&v.value))
+                        .then_some(v.value)
+                });
+                let Some(owner_id) = owner_id.filter(|&id| id != summon_id) else {
+                    continue;
+                };
+                let name_len_idx = server_idx + 2;
+                let name_len = data[name_len_idx] as usize;
+                let name_end = name_len_idx + 1 + name_len;
+                if !NAME_FIELD_BYTES.contains(&name_len) || name_end > data.len() {
+                    continue;
+                }
+                if let Some(name) = exact_name(&data[name_len_idx + 1..name_end]) {
+                    found = Some((owner_id, name, name_end));
                     break;
                 }
             }
-
-            let anchor_idx = match anchor_idx {
-                Some(i) => i,
-                None => continue,
+            let Some((owner_id, name, name_end)) = found else {
+                continue;
             };
-
-            // Read owner ID backward from anchor
-            let mut owner_id: i32 = -1;
-            for v_len in 1..=3usize {
-                if anchor_idx < v_len {
-                    continue;
-                }
-                let v_start = anchor_idx - v_len;
-                if v_start < after_fixed && v_start > 0 {
-                    // skip if out of range but allow 0
-                }
-                if !can_read_varint(data, v_start) {
-                    continue;
-                }
-                let v = read_varint(data, v_start);
-                if v.length == v_len as i32 && (100..=99_999).contains(&v.value) {
-                    owner_id = v.value;
-                    break;
-                }
-            }
-            if owner_id == -1 || owner_id == summon_id {
-                continue;
-            }
-
-            // Read owner name
-            let name_len_idx = anchor_idx + 2;
-            if name_len_idx >= data.len() {
-                continue;
-            }
-            let name_len = data[name_len_idx] as usize;
-            if !(2..=36).contains(&name_len) || name_len_idx + 1 + name_len > data.len() {
-                continue;
-            }
-            let name_bytes = &data[name_len_idx + 1..name_len_idx + 1 + name_len];
-            let name = match std::str::from_utf8(name_bytes) {
-                Ok(s) => s,
-                Err(_) => continue,
-            };
-            let sanitized = match sanitize_nickname(name) {
-                Some(s) => s,
-                None => continue,
-            };
-            if sanitized.len() < 2 {
-                continue;
-            }
 
             if self.data_storage.is_confirmed_summon(summon_id) {
                 self.data_storage.append_summon(owner_id, summon_id);
             }
-            self.data_storage.append_nickname(owner_id, &sanitized);
+            self.data_storage.append_nickname(owner_id, &name);
+            // For a mob that was fought (it follows the mob's `35 38` despawn)
+            // this is the loot owner, which so far has always been you.
+            if !self.data_storage.is_confirmed_summon(summon_id)
+                && self.data_storage.is_damage_target(summon_id)
+                && self.data_storage.note_loot_owner(owner_id, &name)
+            {
+                tracing::info!("loot record: local player '{}' -> entity {}", name, owner_id);
+            }
             found_any = true;
 
-            search_offset = name_len_idx + 1 + name_len;
+            search_offset = name_end;
         }
 
         found_any
@@ -789,6 +720,13 @@ impl StreamProcessor {
     /// `<id u32-LE> <name_len> <name>` shape directly and let the exact
     /// character-name match reject false positives.
     fn scan_char_list_self(&self, data: &[u8]) {
+        // Once the game has sent its self record this list has nothing to add,
+        // and its ids are the list's own, not in-world entities: at character
+        // select after playing Spirtmasta (entity 10044) it listed her as 7796,
+        // and binding that moved "you" onto an entity that never fights.
+        if self.data_storage.local_identity_from_game() {
+            return;
+        }
         let local_name = match self.data_storage.local_character_name() {
             Some(n) => n.trim().to_string(),
             None => return,
@@ -805,7 +743,7 @@ impl StreamProcessor {
                 continue;
             }
             let name_len = data[i + 4] as usize;
-            if !(2..=36).contains(&name_len) {
+            if !NAME_FIELD_BYTES.contains(&name_len) {
                 i += 1;
                 continue;
             }
@@ -815,17 +753,15 @@ impl StreamProcessor {
                 i += 1;
                 continue;
             }
-            if let Ok(name) = std::str::from_utf8(&data[name_start..name_end]) {
-                if let Some(sanitized) = sanitize_nickname(name) {
-                    if sanitized.trim() == local_name {
-                        self.data_storage.append_nickname_authoritative(entity_id as i32, &sanitized);
-                        tracing::info!(
-                            "char-list: bound local player '{}' -> entity {}",
-                            sanitized,
-                            entity_id
-                        );
-                        return;
-                    }
+            if let Some(name) = exact_name(&data[name_start..name_end]) {
+                if name == local_name {
+                    self.data_storage.append_nickname_authoritative(entity_id as i32, &name);
+                    tracing::info!(
+                        "char-list: bound local player '{}' -> entity {}",
+                        name,
+                        entity_id
+                    );
+                    return;
                 }
             }
             i += 1;
@@ -884,48 +820,52 @@ impl StreamProcessor {
                 continue;
             }
             let name_len = data[mask2_idx + 1] as usize;
-            if !(2..=36).contains(&name_len) || mask2_idx + 2 + name_len > data.len() {
+            if !NAME_FIELD_BYTES.contains(&name_len) || mask2_idx + 2 + name_len > data.len() {
                 i += 1;
                 continue;
             }
-            let raw = match std::str::from_utf8(&data[mask2_idx + 2..mask2_idx + 2 + name_len]) {
+            let field = &data[mask2_idx + 2..mask2_idx + 2 + name_len];
+            let raw = match std::str::from_utf8(field) {
                 Ok(s) => s,
                 Err(_) => {
                     i += 1;
                     continue;
                 }
             };
-            let sanitized = match sanitize_nickname(raw) {
-                Some(s) => s,
-                None => {
-                    i += 1;
-                    continue;
+            // A new character plays the tutorial before it has a name; until
+            // then the game calls it `$` plus random letters and digits (seen:
+            // `$Kc03nyeQHr4`, entity 3877, on 2026-10-01). It is still you, so
+            // bind the entity, but with no name: a placeholder would be noise,
+            // and keeping the previous character's name would be wrong.
+            if is_self && is_placeholder_name(raw) {
+                if self.data_storage.set_local_identity_from_game(id.value as i64, None) {
+                    tracing::info!("self record: unnamed tutorial character -> entity {}", id.value);
                 }
-            };
-            // Require the whole field to be one clean name: sanitize_nickname
-            // stops at the first non-name character, so a shorter result means we
-            // landed mid-record rather than on a real name string.
-            if sanitized.len() != name_len {
-                i += 1;
+                i = mask2_idx + 2 + name_len;
                 continue;
             }
+            // The whole field must be one clean name; otherwise we landed
+            // mid-record rather than on a real name string.
+            let Some(sanitized) = exact_name(field) else {
+                i += 1;
+                continue;
+            };
 
             self.data_storage.note_low_id_entity(id.value);
             self.data_storage
                 .append_nickname_authoritative(id.value, &sanitized);
             if is_self {
-                self.data_storage.set_local_player_id(Some(id.value as i64));
-                // Adopt the name as the configured character name when the user
-                // hasn't set one, so every "is this me?" check downstream lines up.
+                // The game's word on who you are replaces whatever name was
+                // configured. That name comes from the window title or the last
+                // session, and both go stale: the title does not change when a
+                // new character is created, and switching character or server
+                // leaves the previous name behind.
                 if self
                     .data_storage
-                    .local_character_name()
-                    .is_none_or(|n| n.trim().is_empty())
+                    .set_local_identity_from_game(id.value as i64, Some(sanitized.clone()))
                 {
-                    self.data_storage
-                        .set_local_character_name(Some(sanitized.clone()));
+                    tracing::info!("self record: local player '{}' -> entity {}", sanitized, id.value);
                 }
-                tracing::info!("self record: local player '{}' -> entity {}", sanitized, id.value);
             } else {
                 tracing::debug!("player record: '{}' -> entity {}", sanitized, id.value);
             }
@@ -979,12 +919,14 @@ impl StreamProcessor {
                 continue;
             }
             match parse_party_roster_at(data, i + 2) {
-                Some((members, complete)) => {
+                Some((members, complete, dungeon_id)) => {
                     tracing::debug!(
-                        "Party roster: {} members (complete={})",
+                        "Party roster: {} members (complete={}, dungeon={})",
                         members.len(),
-                        complete
+                        complete,
+                        dungeon_id
                     );
+                    self.data_storage.set_current_dungeon(dungeon_id);
                     self.data_storage.set_party_roster(members, complete);
                     i += 2;
                 }
@@ -1012,18 +954,12 @@ impl StreamProcessor {
             return;
         }
         let name_len = data[mask2_idx + 1] as usize;
-        if !(2..=36).contains(&name_len) || mask2_idx + 2 + name_len > data.len() {
+        if !NAME_FIELD_BYTES.contains(&name_len) || mask2_idx + 2 + name_len > data.len() {
             return;
         }
-        let Ok(raw) = std::str::from_utf8(&data[mask2_idx + 2..mask2_idx + 2 + name_len]) else {
+        let Some(sanitized) = exact_name(&data[mask2_idx + 2..mask2_idx + 2 + name_len]) else {
             return;
         };
-        let Some(sanitized) = sanitize_nickname(raw) else {
-            return;
-        };
-        if sanitized.len() != name_len {
-            return;
-        }
         // 45/44 36 player spawn is an authoritative id↔name source.
         self.data_storage.note_low_id_entity(actor_id);
         self.data_storage
@@ -1130,15 +1066,13 @@ impl StreamProcessor {
             }
             let cursor = offset + sub_offset + 1;
             let name_len = *packet.get(cursor)? as usize;
-            if !(1..=36).contains(&name_len) || cursor + 1 + name_len > packet.len() {
+            if !NAME_FIELD_BYTES.contains(&name_len) || cursor + 1 + name_len > packet.len() {
                 return None;
             }
-            let raw = std::str::from_utf8(&packet[cursor + 1..cursor + 1 + name_len]).ok()?;
-            let sanitized = sanitize_nickname(raw)?;
-            // A shorter result means sanitising trimmed something, i.e. this is
-            // not cleanly a name field. This check is what makes trying two
-            // positions safe: a wrong guess almost never decodes cleanly.
-            (sanitized.len() == name_len).then(|| (sanitized, cursor + 1 + name_len))
+            // The whole field must be a name. This check is what makes trying
+            // two positions safe: a wrong guess almost never decodes cleanly.
+            let name = exact_name(&packet[cursor + 1..cursor + 1 + name_len])?;
+            Some((name, cursor + 1 + name_len))
         };
 
         // Current format first, so a live stream never depends on the fallback.
@@ -1270,6 +1204,9 @@ impl StreamProcessor {
                     // Register boss entities from NPC DB
                     if self.npc_lookup.is_boss(mob_type_id) {
                         self.data_storage.register_boss(real_actor_id);
+                    }
+                    if self.npc_lookup.is_training_dummy(mob_type_id) {
+                        self.data_storage.register_training_dummy(real_actor_id);
                     }
 
                     // Try to extract HP
@@ -2361,7 +2298,7 @@ fn should_use_repeated_hit_damage(switch_value: i32, encoded_damage: i32, multi_
 fn parse_party_roster_at(
     data: &[u8],
     at: usize,
-) -> Option<(Vec<(String, crate::combat::data_storage::PartyMember)>, bool)> {
+) -> Option<(Vec<(String, crate::combat::data_storage::PartyMember)>, bool, i32)> {
     use crate::combat::data_storage::PartyMember;
 
     let mut o = at.checked_add(4)?; // party_key u32
@@ -2378,6 +2315,10 @@ fn parse_party_roster_at(
     if !(1..=12).contains(&party_size) {
         return None;
     }
+    // The instance the party is queued for / inside. Identifies both the dungeon
+    // and its difficulty tier: Ferocious Horn Den is 600091/600092/600093 for
+    // Exploration / Conquest [Normal] / Conquest [Hard].
+    let dungeon_id = parse_u32_le(data.get(o..o + 4)?, 0) as i32;
     o += 4 + 2 + 8 + 3; // dungeon_id, 2 pad, leader_dbid, 3 pad
     let count_info = read_varint(data, o);
     if count_info.length <= 0 || !(1..=12).contains(&count_info.value) {
@@ -2451,6 +2392,7 @@ fn parse_party_roster_at(
                 gear_score,
                 combat_power: combat_power as i64,
                 server_id,
+                dbid,
             },
         ));
 
@@ -2469,7 +2411,7 @@ fn parse_party_roster_at(
     if members.is_empty() {
         return None;
     }
-    Some((members, complete))
+    Some((members, complete, dungeon_id))
 }
 
 /// Find a little-endian `u16` equal to `wanted` in `data[from..to]`.
@@ -2556,6 +2498,33 @@ fn to_hex(bytes: &[u8]) -> String {
     to_hex_range(bytes, 0, bytes.len())
 }
 
+/// The name the game gives a character that has not been named yet: `$` then
+/// letters and digits.
+fn is_placeholder_name(raw: &str) -> bool {
+    raw.strip_prefix('$')
+        .is_some_and(|rest| rest.len() >= 4 && rest.chars().all(|c| c.is_ascii_alphanumeric()))
+}
+
+/// Byte lengths a length-prefixed name field can have: 1 to 12 characters of
+/// up to 4 UTF-8 bytes each.
+const NAME_FIELD_BYTES: std::ops::RangeInclusive<usize> = 1..=48;
+
+/// A character name read from a field whose length the packet states.
+///
+/// Names are 1 to 12 characters: letters in any script (Latin with accents,
+/// Japanese, Hangul, Han…) and digits, with at least one letter. The whole
+/// field must be the name; anything else means we are not on a name field.
+/// Unlike `sanitize_nickname`, a one-character name is fine here: the stated
+/// length is what guards against picking up junk.
+fn exact_name(field: &[u8]) -> Option<String> {
+    let name = std::str::from_utf8(field).ok()?;
+    let chars = name.chars().count();
+    let valid = (1..=12).contains(&chars)
+        && name.chars().all(char::is_alphanumeric)
+        && name.chars().any(char::is_alphabetic);
+    valid.then(|| name.to_string())
+}
+
 fn sanitize_nickname(nickname: &str) -> Option<String> {
     let trimmed = nickname.split('\0').next().unwrap_or("").trim();
     if trimmed.is_empty() {
@@ -2632,5 +2601,56 @@ fn unicode_script(ch: char) -> UnicodeScript {
         UnicodeScript::Hangul
     } else {
         UnicodeScript::Other
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn names_are_one_to_twelve_letters_or_digits_in_any_script() {
+        for name in ["A", "é", "あ", "ApexZ", "Amber1", "Zoë", "Ñandú", "さくら", "桜子", "전사", "Abcdefghijkl"] {
+            assert_eq!(exact_name(name.as_bytes()).as_deref(), Some(name), "{name}");
+        }
+        for field in [
+            &b"Abcdefghijklm"[..], // 13 characters
+            b"12345",              // no letter
+            b"Apex Z",
+            b"ApexZ\x06",
+            b"\x05ApexZ",
+            b"",
+            &[0xC3][..], // cut-off UTF-8
+        ] {
+            assert_eq!(exact_name(field), None, "{field:?}");
+        }
+    }
+
+    /// A Sorcerer on Ventus (server 1305) killing a mob, from a player's log
+    /// (2026-10-01): `04 8d <mob> <4 bytes> <owner 1454> <server 1305> <name>
+    /// <server name>`. The server id used to be matched only as `E0 07` /
+    /// `E2 07`, so this owner never got a name. (Whether the name is then bound
+    /// depends on 1454 having been seen in combat; `identity_replay` covers that.)
+    #[test]
+    fn kill_record_names_its_owner_on_any_server() {
+        let processor = StreamProcessor::new(
+            Arc::new(DataStorage::new()),
+            Arc::new(SkillLookup::new()),
+            Arc::new(NpcLookup::new()),
+        );
+        let record = [
+            &[0x04, 0x8d, 0xec, 0xde, 0x02, 0x72, 0x28, 0xe9, 0x00, 0xae, 0x0b, 0x19, 0x05, 0x05][..],
+            b"ApexZ",
+            &[0x06],
+            b"Ventus",
+            &[0x01, 0x00, 0x00, 0x00],
+        ]
+        .concat();
+        assert!(processor.scan_for_embedded_04_8d(&record));
+
+        // The same record with a name that runs into the next field is not one.
+        let mut garbled = record.clone();
+        garbled[13] = 0x07;
+        assert!(!processor.scan_for_embedded_04_8d(&garbled));
     }
 }

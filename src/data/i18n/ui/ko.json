@@ -5,7 +5,9 @@
       "dps": "DPS",
       "total": "DMG",
       "ariaDps": "DPS 표시 중",
-      "ariaDamage": "총 피해 표시 중"
+      "ariaDamage": "총 피해 표시 중",
+      "both": "둘 다",
+      "ariaBoth": "DPS와 총 피해 표시 중"
     }
   },
   "details": {
@@ -122,7 +124,12 @@
     "previewUpload": "업로드 미리보기",
     "previewUploadTip": "이 전투를 공유하면 무엇이 올라가는지 파일로 남깁니다. 전송하지 않습니다.",
     "previewWorking": "미리보기를 만드는 중…",
-    "previewDone": "{slice} KB를 저장했습니다(압축 시 {sent} KB — 실제 업로드 크기). 패킷 {seen}개 중 {kept}개를 남기고 이름 {blinded}개를 가렸습니다. 아무것도 업로드하지 않았습니다. 저장 위치: {dir}"
+    "previewDone": "{slice} KB를 저장했습니다(압축 시 {sent} KB — 실제 업로드 크기). 패킷 {seen}개 중 {kept}개를 남기고 이름 {blinded}개를 가렸습니다. 아무것도 업로드하지 않았습니다. 저장 위치: {dir}",
+    "uploadTip": "이 전투를 a2tools.app에 업로드하고 공유 링크 받기",
+    "uploadOpen": "a2tools.app에서 이 전투 기록 열기",
+    "uploadWorking": "업로드 중…",
+    "uploadDonePublic": "업로드 완료. 링크 복사됨: {url}",
+    "uploadDonePrivate": "비공개로 업로드됨. 링크 복사됨: {url}"
   },
   "settings": {
     "title": "설정",
@@ -174,6 +181,7 @@
     "roundDps": "DPS 반올림",
     "autoHideMeter": "미터 자동 숨기기",
     "showSuspendBtn": "일시정지 버튼 표시",
+    "showLockBtn": "잠금 버튼 표시 (클릭 통과)",
     "playerLimit": {
       "label": "최대 표시 인원"
     },
@@ -243,7 +251,8 @@
       "reload": "데이터 새로고침",
       "toggle": "창 표시/숨기기",
       "pressKeys": "키를 누르세요...",
-      "needModifiers": "수정자 2개 이상 필요"
+      "needModifiers": "수정자 2개 이상 필요",
+      "lock": "오버레이 잠금/해제"
     },
     "defaultMeterMode": {
       "label": "기본 미터 모드"
@@ -268,7 +277,9 @@
       "codeHint": "페이지가 이미 열렸을 것입니다. 코드는 10분 후 만료됩니다.",
       "working": "승인을 기다리는 중…",
       "failed": "로그인 실패: {error}",
-      "supporter": "후원자"
+      "supporter": "후원자",
+      "autoUpload": "보스전 자동 업로드",
+      "autoUploadHint": "보스전이 끝나면 a2tools.app에서 선택한 공개 설정으로 계정에 업로드됩니다. 다른 플레이어의 이름은 가려집니다. 허수아비 전투는 업로드되지 않습니다."
     }
   },
   "support": {

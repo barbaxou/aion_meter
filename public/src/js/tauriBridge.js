@@ -116,6 +116,12 @@
   let cachedCaptureStatus = null;
   let cachedDetailsContext = null;
   let cachedAppVersion = "";     // populated on startup from Tauri backend
+  let captureSuspended = false;  // the suspend button's state; the backend's is the truth
+
+  // A reloaded window picks the suspend state back up from the backend.
+  invoke("is_capture_suspended").then((v) => {
+    captureSuspended = !!v;
+  }).catch(() => {});
 
   // Fetch app version from backend (sourced from Cargo.toml via env!("CARGO_PKG_VERSION"))
   invoke("get_app_version").then((v) => {
@@ -168,6 +174,13 @@
     settingsCache[key] = String(value);
     try { localStorage.setItem(key, String(value)); } catch {}
     window._dpsApp?.applyRemoteSettingChange?.(key, String(value));
+  });
+
+  // Retrait XIII NRV : l'écoute de « account-changed » (connexion à a2tools.app).
+
+  // The lock hotkey toggled the click-through lock; the page follows.
+  listen("overlay-lock-changed", (event) => {
+    window._dpsApp?._onOverlayLockChanged?.(!!event?.payload);
   });
 
   listen("npcap-missing", () => {
@@ -346,8 +359,10 @@
     setTargetSelection(mode) {
       invoke("set_target_mode", { mode }).catch(() => {});
     },
-    setCharacterName(name) {
-      invoke("set_character_name", { name }).catch(() => {});
+    // `manual`: the player typed it, so the backend takes it even after the
+    // game has named the character.
+    setCharacterName(name, manual) {
+      invoke("set_character_name", { name, manual: !!manual }).catch(() => {});
     },
     bindLocalActorId(actorId) {
       const id = Number(actorId);
@@ -427,6 +442,13 @@
       invoke("get_available_devices").then((d) => { window._cachedDevices = d; }).catch(() => {});
       return JSON.stringify(window._cachedDevices);
     },
+    // The same list, for a caller that can wait for it.
+    loadAvailableDevices() {
+      return invoke("get_available_devices").then((d) => {
+        window._cachedDevices = d;
+        return d;
+      });
+    },
     setManualDevice(device) {
       invoke("set_manual_device", { device: device || "" }).catch(() => {});
     },
@@ -435,20 +457,32 @@
     },
 
     // --- Screenshots ---
-    captureScreenshotToClipboard(x, y, w, h) {
-      try {
-        invoke("capture_screenshot", {
-          x: Math.round(x), y: Math.round(y),
-          width: Math.round(w), height: Math.round(h),
-        }).catch(() => {});
-        return true;
-      } catch {
-        return false;
-      }
+    // Screenshots. The backend measures against whichever window calls, so the
+    // Details window captures (and saves) itself. Coordinates are the page's
+    // CSS pixels; `scale` is devicePixelRatio, which the backend needs to map
+    // them onto the screen at 125%/150% display scaling.
+    // Resolves to { clipboard: bool, file: path | null }.
+    captureScreenshot({ x, y, width, height, scale, includeMeter, saveFile, folder, filename }) {
+      return invoke("capture_screenshot", {
+        x, y, width, height,
+        scale: scale || window.devicePixelRatio || 1,
+        includeMeter: !!includeMeter,
+        saveFile: !!saveFile,
+        folder: folder || null,
+        filename: filename || null,
+      }).catch(() => ({ clipboard: false, file: null }));
     },
-    captureScreenshotToFile() { return false; },
-    chooseScreenshotFolder() { return null; },
-    getDefaultScreenshotFolder() { return ""; },
+    captureScreenshotToClipboard(x, y, w, h, scale) {
+      this.captureScreenshot({ x, y, width: w, height: h, scale });
+      return true;
+    },
+    // Resolves to the chosen folder, or null if the player cancels.
+    chooseScreenshotFolder(current) {
+      return invoke("choose_screenshot_folder", { current: current || null }).catch(() => null);
+    },
+    getDefaultScreenshotFolder() {
+      return window._defaultScreenshotFolder || "";
+    },
 
     // --- Hotkeys ---
     getCurrentHotKey() {
@@ -456,6 +490,23 @@
     },
     getCurrentToggleWindowHotKey() {
       return this.getSetting("dpsMeter.toggleWindowHotkey") || "";
+    },
+    getCurrentLockHotKey() {
+      return this.getSetting("dpsMeter.lockHotkey") || "Ctrl+Alt+L";
+    },
+    setLockHotkey(mods, vk) {
+      this.setSetting("dpsMeter.lockHotkey", this._buildHotkeyLabel(mods, vk));
+    },
+    // The click-through lock (OverlayLock in app.rs). A promise: whether the
+    // backend can keep the lock button clickable here.
+    overlayLockSupported() {
+      return invoke("overlay_lock_supported").catch(() => false);
+    },
+    setOverlayLocked(locked) {
+      invoke("set_overlay_locked", { locked: !!locked }).catch(() => {});
+    },
+    setLockButtonRect(x, y, width, height, scale) {
+      invoke("set_lock_button_rect", { x, y, width, height, scale }).catch(() => {});
     },
     setHotkey(mods, vk) {
       const label = this._buildHotkeyLabel(mods, vk);
@@ -488,8 +539,13 @@
     // --- Feature flags ---
     isRunningFromIde() { return false; },
     getParsingBacklog() { return 0; },
-    isCaptureSuspended() { return false; },
-    suspendCapture() {},
+    // The header's suspend button. The backend owns the switch; this keeps a
+    // copy so the UI can read it synchronously, as it does at load.
+    isCaptureSuspended() { return captureSuspended; },
+    suspendCapture(suspended) {
+      captureSuspended = !!suspended;
+      invoke("suspend_capture", { suspended: captureSuspended }).catch(() => {});
+    },
     setBossLogsEnabled() {},
     setAutoHideMeter(enabled) {
       invoke("update_settings", { key: "dpsMeter.autoHideMeter", value: String(enabled) }).catch(() => {});
@@ -526,6 +582,17 @@
     getFightDetails(id) {
       // Async — returns a promise
       return invoke("load_fight", { id }).then((r) => JSON.stringify(r)).catch(() => null);
+    },
+
+    // Retrait XIII NRV : `accountStatus`, `accountBeginLink`, `accountSignOut`
+    // (compte a2tools.app), `uploadFight` et `shareStatus` (téléversement des
+    // combats). Seul `previewShare` reste : il écrit sur le disque, sans envoi.
+
+    // Writes the two files an upload would send and returns a summary.
+    // Deliberately does NOT upload — see docs/PRIVACY.md and the
+    // `preview_share` command. Rejects with a message the UI shows verbatim.
+    previewShare(id) {
+      return invoke("preview_share", { fightId: id });
     },
 
     deleteFight(id) {
@@ -569,6 +636,10 @@
       }).catch(() => {});
       return null;
     },
+    // A line in debug.log, for problems only the UI sees.
+    logToDebug(message) {
+      invoke("log_from_ui", { message: String(message) }).catch(() => {});
+    },
     writeCachedIcon(key, data) {
       if (!key || !data) return;
       if (!window._iconCache) window._iconCache = {};
@@ -576,24 +647,8 @@
       invoke("write_cached_icon", { key, data }).catch(() => {});
     },
 
-    // --- Fetch ---
-    fetchUrlAsync(url, callbackId) {
-      // checkRelease.js registers a callback via window._fetchUrlCallback(id, raw)
-      // Add cache-buster and no-cache headers to avoid stale CDN responses
-      const bustUrl = url + (url.includes("?") ? "&" : "?") + "_t=" + Date.now();
-      fetch(bustUrl, { cache: "no-store" })
-        .then((r) => r.text())
-        .then((text) => {
-          if (callbackId && typeof window._fetchUrlCallback === "function") {
-            window._fetchUrlCallback(callbackId, text);
-          }
-        })
-        .catch(() => {
-          if (callbackId && typeof window._fetchUrlCallback === "function") {
-            window._fetchUrlCallback(callbackId, JSON.stringify({ error: "fetch failed" }));
-          }
-        });
-    },
+    // Retrait XIII NRV : `fetchUrlAsync`, qui allait chercher une adresse dictée
+    // par l'interface pour la vérification de version — coupée elle aussi.
 
     // --- Admin ---
     isAdmin() {
@@ -655,10 +710,12 @@
 
     const w = fullPanel ? PANEL_WIDTH : tooltipOnly ? TOOLTIP_WIDTH : contentW;
     const h = fullPanel ? Math.max(PANEL_HEIGHT, contentH) : contentH;
-    const sizeKey = `${w}x${h}`;
+    const sizeKey = `${w}x${h}@${window.devicePixelRatio || 1}`;
     if (sizeKey === lastSizeKey) return;
     lastSizeKey = sizeKey;
-    invoke("resize_window", { width: w, height: h }).catch(() => {});
+    // The page's devicePixelRatio, so the backend sizes the window in the
+    // pixels the page is actually drawn at (Windows text size included).
+    invoke("resize_window", { width: w, height: h, scale: window.devicePixelRatio || 1 }).catch(() => {});
   };
 
   // Watch all class changes on the container to catch panel open/close instantly
@@ -716,6 +773,12 @@
   // Pre-fetch device list and fight history so they're ready when panels open
   invoke("get_available_devices").then((d) => { window._cachedDevices = d; }).catch(() => {});
   invoke("get_fight_history").then((h) => { window._cachedFightHistory = h; }).catch(() => {});
+  invoke("default_screenshot_folder")
+    .then((f) => {
+      window._defaultScreenshotFolder = f || "";
+      window._dpsApp?.updateScreenshotFolderDisplay?.();
+    })
+    .catch(() => {});
   // Refresh fight history periodically (picks up auto-saved fights)
   setInterval(() => {
     invoke("get_fight_history").then((h) => { window._cachedFightHistory = h; }).catch(() => {});
@@ -727,7 +790,7 @@
     resizeActive = true;
     const screenW = window.screen.availWidth || 1920;
     const screenH = window.screen.availHeight || 1080;
-    invoke("resize_window", { width: Math.min(screenW, 2000), height: Math.min(screenH, 1200) }).catch(() => {});
+    invoke("resize_window", { width: Math.min(screenW, 2000), height: Math.min(screenH, 1200), scale: window.devicePixelRatio || 1 }).catch(() => {});
   };
   const shrinkViewport = () => {
     if (resizeActive) {

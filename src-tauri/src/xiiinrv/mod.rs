@@ -8,10 +8,12 @@
 //!   `observer()` reçoit chaque paquet déjà découpé par A2Tools — une seule ligne
 //!   ajoutée dans `parse_perfect_packet`. On n'y reconnaît que quatre paquets :
 //!
-//!     33 36   fiche personnelle : nom, serveur, niveau, Item Level, PV, PM
-//!     11 56   inventaire complet : les objets équipés et leur enchantement
-//!     56 36   Combat Power (trois petits paquets à l'entrée en jeu)
-//!     00 90   Genus Insight : les cinq familles de pets et leurs effets
+//! ```text
+//!   33 36   fiche personnelle : nom, serveur, niveau, Item Level, PV, PM
+//!   11 56   inventaire complet : les objets équipés et leur enchantement
+//!   56 36   Combat Power (trois petits paquets à l'entrée en jeu)
+//!   00 90   Genus Insight : les cinq familles de pets et leurs effets
+//! ```
 //!
 //!   Tout le reste est ignoré. Aucun message de discussion, aucune position,
 //!   aucun autre joueur : uniquement la fiche de son propre personnage.
@@ -26,10 +28,8 @@
 
 pub mod collecte;
 pub mod envoi;
-pub mod tampon;
 
 pub use collecte::observer;
-pub use tampon::{deverrouille, recevoir, verrouille};
 pub use envoi::{demarrer, envoyer_maintenant, etat_partage};
 
 /// Clés de réglage, rangées avec celles d'A2Tools dans settings.json.

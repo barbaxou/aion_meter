@@ -5,7 +5,9 @@
       "dps": "DPS",
       "total": "DAN",
       "ariaDps": "Mostrando DPS",
-      "ariaDamage": "Mostrando dano total"
+      "ariaDamage": "Mostrando dano total",
+      "both": "AMBOS",
+      "ariaBoth": "Mostrando DPS e dano total"
     }
   },
   "details": {
@@ -174,6 +176,7 @@
     "roundDps": "Arredondar DPS",
     "autoHideMeter": "Ocultar o medidor automaticamente",
     "showSuspendBtn": "Mostrar botão de pausa",
+    "showLockBtn": "Mostrar botão de bloqueio (clicar através)",
     "playerLimit": {
       "label": "Máx. de jogadores exibidos"
     },
@@ -243,7 +246,8 @@
       "reload": "Recarregar dados",
       "toggle": "Mostrar/ocultar janela",
       "pressKeys": "Pressione as teclas...",
-      "needModifiers": "São necessários 2+ modificadores"
+      "needModifiers": "São necessários 2+ modificadores",
+      "lock": "Bloquear/desbloquear sobreposição"
     },
     "defaultMeterMode": {
       "label": "Modo padrão"

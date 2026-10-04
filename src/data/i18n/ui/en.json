@@ -6,6 +6,8 @@
       "total": "DMG",
       "ariaDps": "Showing DPS",
       "ariaDamage": "Showing total damage",
+      "both": "BOTH",
+      "ariaBoth": "Showing DPS and total damage",
       "part": "%",
       "heal": "HEAL",
       "ariaPart": "Showing damage share",
@@ -106,7 +108,11 @@
     },
     "dpsChart": "DPS Chart",
     "historyBtn": "History",
-    "timeline": "Timeline"
+    "timeline": "Timeline",
+    "mode": {
+      "dmg": "DMG",
+      "heal": "HEAL"
+    }
   },
   "history": {
     "title": "Battle History",
@@ -180,6 +186,7 @@
     "roundDps": "Round DPS",
     "autoHideMeter": "Auto-hide meter",
     "showSuspendBtn": "Show suspend button",
+    "showLockBtn": "Show lock button (click-through)",
     "playerLimit": {
       "label": "Max players shown"
     },
@@ -250,6 +257,7 @@
       "toggle": "Show/Hide window",
       "pressKeys": "Press keys...",
       "needModifiers": "Need 2+ modifiers",
+      "lock": "Lock/unlock overlay",
       "unset": "Press to set a shortcut"
     },
     "defaultMeterMode": {
