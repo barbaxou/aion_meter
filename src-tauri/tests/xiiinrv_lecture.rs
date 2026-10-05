@@ -709,3 +709,91 @@ fn appliquer_les_reglages_ouvre_la_lecture() {
     configurer(None, None, false);
     collecte::vider();
 }
+
+/// Changer de personnage doit faire relire la fiche imbriquée.
+///
+/// La fiche arrive imbriquée dans le gros paquet d'entrée en jeu, et
+/// `observer()` ne va la chercher là que derrière une condition :
+/// `etat().niveau.is_none()`. Une fois un niveau connu, cette porte se refermait
+/// définitivement. Au changement de personnage, la nouvelle fiche n'était donc
+/// plus jamais lue : `lire_fiche` n'étant pas atteint, le
+/// `changer_de_personnage()` qu'il contient ne tirait pas non plus, et le nom,
+/// le niveau et l'Item Level du personnage précédent restaient en mémoire.
+///
+/// Vu du site, la fiche restait collée au premier personnage joué. barbaxou l'a
+/// signalé le 05/10/2026 : après bascule, le site affichait toujours « Barbax »
+/// alors que le meter avait bien reconnu « Barbaxou ».
+///
+/// Les octets viennent de sa capture `packets_20261005_231354.txt` : les deux
+/// personnages y apparaissent à 23:19:44 et 23:22:09, avec la même disposition
+/// de champs. Ils sont recopiés ici tels quels pour que le test porte sur du
+/// réel et non sur une disposition supposée.
+#[test]
+fn changer_de_personnage_fait_relire_la_fiche_imbriquee() {
+    let _garde = VERROU.lock().unwrap_or_else(|e| e.into_inner());
+
+    /// Un paquet d'entrée en jeu : un opcode extérieur qui n'est **pas**
+    /// `33 36`, la marque `33 36` à l'intérieur, puis la fiche.
+    ///
+    /// `suite` est la séquence relevée après le nom dans la capture :
+    /// serveur `ff 08`, classe u32, un octet, niveau u32, Item Level u16.
+    fn paquet_imbrique(nom: &str, suite: &[u8]) -> Vec<u8> {
+        let mut p = vec![0x60, 0x60, 0x88]; // longueur (varint), puis opcode 60 88
+        p.extend_from_slice(&[0x33, 0x36]); // la marque, à l'intérieur du paquet
+        p.extend_from_slice(&[0x00, 0x00]);
+        p.extend_from_slice(nom.as_bytes());
+        p.extend_from_slice(suite);
+        p.extend_from_slice(&[0x00; 16]);
+        p
+    }
+
+    // Relevés dans la capture, octet pour octet.
+    let suite_barbax = [
+        0xff, 0x08, 0x0f, 0x00, 0x00, 0x00, 0x02, 0x2d, 0x00, 0x00, 0x00, 0x57, 0x06,
+    ];
+    let suite_barbaxou = [
+        0xff, 0x08, 0x1f, 0x00, 0x00, 0x00, 0x02, 0x2d, 0x00, 0x00, 0x00, 0x4a, 0x05,
+    ];
+
+    collecte::vider();
+    collecte::ouvrir_lecture(true);
+
+    // Premier personnage : la porte est ouverte, puisqu'aucun niveau n'est connu.
+    collecte::nom_detecte(Some("Barbax".to_string()));
+    collecte::observer(&paquet_imbrique("Barbax", &suite_barbax));
+    let e = collecte::lire_etat();
+    assert_eq!(
+        e.nom.as_deref(),
+        Some("Barbax"),
+        "témoin : la fiche imbriquée du premier personnage doit être lue, \
+         sinon le reste du test ne prouve rien"
+    );
+    assert_eq!(e.niveau, Some(45), "témoin : le niveau du premier personnage");
+    assert_eq!(e.item_level, Some(1623), "témoin : l'Item Level du premier personnage");
+
+    // Bascule : le jeu annonce l'autre personnage. C'est le signal dont on
+    // dispose réellement — `nom_detecte` est rafraîchi toutes les 15 secondes
+    // depuis l'identité que le jeu donne.
+    collecte::nom_detecte(Some("Barbaxou".to_string()));
+    collecte::observer(&paquet_imbrique("Barbaxou", &suite_barbaxou));
+
+    let e = collecte::lire_etat();
+    assert_eq!(
+        e.nom.as_deref(),
+        Some("Barbaxou"),
+        "la fiche du nouveau personnage doit remplacer l'ancienne ; \
+         rester sur « Barbax » est le défaut signalé le 05/10/2026"
+    );
+    assert_eq!(
+        e.item_level,
+        Some(1354),
+        "l'Item Level doit suivre le personnage, pas rester celui du précédent"
+    );
+
+    collecte::ouvrir_lecture(false);
+    collecte::vider();
+    // `vider()` ne touche pas au nom détecté, et `lire_etat()` s'en sert comme
+    // filet quand la fiche n'en porte pas : le laisser ici faisait échouer
+    // `ne_lit_rien_sans_jeton`, qui vérifie qu'aucun nom n'est lu.
+    collecte::nom_detecte(None);
+}

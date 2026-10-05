@@ -339,6 +339,41 @@ fn entete(packet: &[u8]) -> Option<([u8; 2], usize)> {
     Some(([a, b], lus + 2))
 }
 
+/// Faut-il aller chercher la fiche imbriquée dans un paquet d'entrée en jeu ?
+///
+/// La condition était `niveau.is_none()` seule, et **c'était un piège**. Elle
+/// s'ouvrait au premier personnage, puis se refermait pour de bon : `lire_fiche`
+/// n'étant plus atteint, le `changer_de_personnage()` qu'il contient ne tirait
+/// jamais, et le nom, le niveau et l'Item Level du premier personnage restaient
+/// en mémoire pour toute la session. Vu du site, la fiche restait collée à ce
+/// premier personnage — barbaxou l'a signalé le 05/10/2026 : après bascule, le
+/// site affichait encore « Barbax » alors que le meter avait bien reconnu
+/// « Barbaxou », les deux lectures étant correctes dans son journal.
+///
+/// On rouvre donc aussi quand le jeu lui-même annonce quelqu'un d'autre. Ce
+/// signal existe déjà et ne coûte rien : `nom_detecte` est rafraîchi toutes les
+/// quinze secondes depuis l'identité que le jeu donne. C'est un second avis,
+/// indépendant de notre lecture de la fiche — la même méthode que pour le
+/// Combat Power, retenu seulement quand un deuxième paquet le confirme.
+fn fiche_a_chercher() -> bool {
+    let (niveau, nom_garde) = {
+        let e = etat().lock();
+        (e.niveau, e.nom.clone())
+    };
+    if niveau.is_none() {
+        return true;
+    }
+    let nom_du_jeu = nom_detecte_stock().lock().clone();
+    match (nom_du_jeu.as_deref(), nom_garde.as_deref()) {
+        // Le jeu nous dit qu'on joue un autre personnage que celui de la fiche.
+        (Some(du_jeu), Some(garde)) => du_jeu != garde,
+        // Un niveau sans nom : la fiche est incomplète, on continue de chercher.
+        (_, None) => true,
+        // Le jeu ne dit rien : on s'en tient à ce qu'on a.
+        (None, Some(_)) => false,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Point d'entrée : un paquet, déjà découpé par A2Tools
 // ---------------------------------------------------------------------------
@@ -355,14 +390,30 @@ pub fn observer(packet: &[u8]) {
     // La fiche de personnage n'arrive pas toujours seule : à l'entrée en jeu
     // elle est imbriquée dans un plus gros paquet (`60 88`), et notre lecture,
     // qui ne regardait que l'opcode extérieur, passait à côté. On la cherche
-    // donc dans tout paquet qui porte la marque `33 36`, tant qu'on n'a pas
-    // encore de niveau.
-    if opcode != [0x33, 0x36] && etat().lock().niveau.is_none() {
+    // donc dans tout paquet qui porte la marque `33 36`, quand `fiche_a_chercher`
+    // dit qu'il y a lieu de le faire.
+    if opcode != [0x33, 0x36] && fiche_a_chercher() {
         let porte_la_marque = packet
             .windows(2)
             .any(|f| f[0] == 0x33 && f[1] == 0x36);
         if porte_la_marque {
+            // Ce chemin ne journalisait rien, et son silence a induit en erreur
+            // le 06/10/2026 : les compteurs de « fiche de personnage vue »
+            // restaient à zéro alors que la fiche était bel et bien lue ici,
+            // d'où la conclusion fausse qu'elle n'arrivait jamais. Un chemin
+            // muet ne se distingue pas d'un chemin mort.
+            let avant = etat().lock().nom.clone();
             lire_fiche(packet);
+            let apres = etat().lock().nom.clone();
+            if avant != apres {
+                info!(
+                    "XIII NRV : fiche imbriquée lue dans un paquet {:02x} {:02x} ({} octets) — {:?}",
+                    opcode[0],
+                    opcode[1],
+                    packet.len(),
+                    apres.as_deref().unwrap_or("(pas de nom)")
+                );
+            }
         }
     }
 
