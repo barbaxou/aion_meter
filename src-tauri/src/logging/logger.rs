@@ -36,6 +36,9 @@ static DEBUG_WRITER: Mutex<Option<DebugFileWriter>> = Mutex::new(None);
 struct DebugFileWriter {
     writer: std::io::BufWriter<std::fs::File>,
     bytes_written: u64,
+    /// Ajout XIII NRV : il faut savoir où écrire pour pouvoir faire tourner le
+    /// fichier quand il est plein.
+    path: std::path::PathBuf,
 }
 
 const MAX_DEBUG_LOG_SIZE: u64 = 5 * 1024 * 1024; // 5 MB
@@ -61,8 +64,35 @@ impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for DebugFileLayer {
             Some(l) => l,
             None => return,
         };
+        // Correction XIII NRV : passé cette taille, le journal s'arrêtait **pour
+        // toujours**, sans rotation ni purge et sans rien dire. Celui de
+        // barbaxou était plein depuis le 02/10/2026 : trois jours de diagnostics
+        // pendant lesquels aucune trace ne s'écrivait, alors que le réglage
+        // affichait « activé ». On repart donc d'un fichier neuf, en gardant le
+        // précédent sous `debug.log.1` — la fin d'un journal est ce qui compte,
+        // mais le début de la session a parfois la réponse.
         if logger.bytes_written > MAX_DEBUG_LOG_SIZE {
-            return;
+            if let Some(dir) = logger.path.parent() {
+                let _ = logger.writer.flush();
+                let precedent = dir.join("debug.log.1");
+                let _ = std::fs::remove_file(&precedent);
+                let _ = std::fs::rename(&logger.path, &precedent);
+                match std::fs::OpenOptions::new()
+                    .create(true)
+                    .truncate(true)
+                    .write(true)
+                    .open(&logger.path)
+                {
+                    Ok(f) => {
+                        logger.writer = std::io::BufWriter::new(f);
+                        logger.bytes_written = 0;
+                    }
+                    // Rien à faire de plus : on cesse d'écrire, comme avant.
+                    Err(_) => return,
+                }
+            } else {
+                return;
+            }
         }
 
         let now = chrono::Local::now().format("%H:%M:%S%.3f");
@@ -133,6 +163,7 @@ pub fn set_debug_enabled(enabled: bool, log_dir: &std::path::Path) {
                 *guard = Some(DebugFileWriter {
                     writer: std::io::BufWriter::new(file),
                     bytes_written: bytes,
+                    path: path.clone(),
                 });
             } // guard dropped before tracing
             tracing::info!("Debug file logging started: {}", path.display());
