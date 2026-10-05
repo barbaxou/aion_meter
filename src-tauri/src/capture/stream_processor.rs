@@ -105,6 +105,8 @@ pub mod diag_arrets {
     /// valide, un acteur plausible et un code de compétence crédible suivent,
     /// c'est que le paquet était bien aligné et qu'on a refusé un vrai coup.
     pub static SUITE_CREDIBLE: AtomicU64 = AtomicU64::new(0);
+    /// Petites cibles acceptées parce que la suite les corrobore.
+    pub static CIBLE_CORROBOREE: AtomicU64 = AtomicU64::new(0);
     pub static SUITE_INCOHERENTE: AtomicU64 = AtomicU64::new(0);
     /// Combien de fois chaque valeur 0..=99 a été refusée. Une poignée de
     /// valeurs récurrentes désigne de vraies entités ; une purée uniforme
@@ -164,8 +166,9 @@ pub mod diag_arrets {
     pub fn bilan_cibles() -> String {
         let l = |c: &AtomicU64| c.load(Relaxed);
         format!(
-            "cibles refusées — suite crédible {} / incohérente {} | illisibles {} |              valeurs les plus vues : {}",
-            l(&SUITE_CREDIBLE), l(&SUITE_INCOHERENTE), l(&VALEUR_ILLISIBLE),
+            "cibles — corroborées {} (récupérées) | refusées : crédible {} /              incohérente {} | illisibles {} | valeurs les plus vues : {}",
+            l(&CIBLE_CORROBOREE), l(&SUITE_CREDIBLE), l(&SUITE_INCOHERENTE),
+            l(&VALEUR_ILLISIBLE),
             valeurs_frequentes()
         )
     }
@@ -1846,16 +1849,43 @@ impl StreamProcessor {
             // silently dropped. Ids a spawn or identity record has confirmed are
             // let through; unconfirmed small values still bail out, so the gate
             // keeps doing its job.
+            // Correction XIII NRV : une petite cible est acceptée si la suite
+            // du paquet la corrobore.
+            //
+            // Le garde-fou `is_plausible_entity_id` refuse tout identifiant
+            // sous 100 non annoncé. Il coupait 73 % de nos chaînes de coups, et
+            // comme un arrêt emporte tous les coups chaînés qui suivaient, nous
+            // perdions de 6 à 35 % des dégâts en groupe — A2Tools aussi, à un
+            // point près, puisque c'est leur code.
+            //
+            // Mais le relâcher aurait été une faute : mesuré le 05/10/2026 sur
+            // 1 937 refus, **78 % ont une suite incohérente**. Le découpage avait
+            // bien dérivé, et le garde-fou faisait son travail ; l'ouvrir aurait
+            // fabriqué près de quatre coups faux sur cinq.
+            //
+            // Restent 21 % — 405 refus — où switch, acteur et code de compétence
+            // tombent tous les trois juste. Ceux-là sont de vrais coups, et c'est
+            // eux qu'on récupère : non pas en baissant la garde, mais en exigeant
+            // un second avis. Même méthode que pour le Combat Power, retenu
+            // seulement quand un deuxième paquet le confirme.
+            //
+            // Que la cible soit atteignable est établi : sur le même combat,
+            // Kuroukihime — un décodeur indépendant — rendait 1,15 M là où le jeu
+            // en annonçait 1 151 323, quand nous rendions 1,08 M et A2Tools 1,07 M.
             let lue = try_read_varint(packet, &mut offset);
             let target_value = match lue {
                 Some(v) if self.data_storage.is_plausible_entity_id(v) => v,
+                Some(v)
+                    if v >= 1
+                        && suite_ressemble_a_un_coup(packet, offset, &self.data_storage) =>
+                {
+                    DA::CIBLE_CORROBOREE.fetch_add(1, Relaxed);
+                    v
+                }
                 _ => {
                     DA::CIBLE_IMPLAUSIBLE.fetch_add(1, Relaxed);
                     if parsed_any { DA::ARRET_EN_CHAINE.fetch_add(1, Relaxed); }
-                    // Quelle valeur a été refusée, et la suite tient-elle debout ?
-                    let credible =
-                        suite_ressemble_a_un_coup(packet, offset, &self.data_storage);
-                    DA::noter_cible_refusee(lue, credible);
+                    DA::noter_cible_refusee(lue, false);
                     break;
                 }
             };

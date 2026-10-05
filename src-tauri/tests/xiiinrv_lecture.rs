@@ -660,3 +660,52 @@ fn hex_vers_octets(hexa: &str) -> Option<Vec<u8>> {
         .map(|i| u8::from_str_radix(&hexa[i..i + 2], 16).ok())
         .collect()
 }
+
+/// Appliquer les réglages ouvre la lecture, et les retirer la referme.
+///
+/// Ce test existe à cause d'un défaut précis. `configurer()` n'était appelé que
+/// depuis `update_settings`, donc **uniquement quand on touchait un réglage dans
+/// l'interface**. Au lancement du meter, personne ne relisait `settings.json` :
+/// le partage restait inactif en mémoire, la lecture des paquets était fermée,
+/// et pourtant la case de l'interface s'affichait cochée puisqu'elle lit le
+/// fichier. Plus rien n'était lu tant que le membre n'allait pas décocher puis
+/// recocher sa case.
+///
+/// Vu de l'extérieur, cela ressemblait à des pertes de reconnaissance
+/// aléatoires : certaines sessions remontaient la fiche, d'autres non, sans
+/// raison apparente. barbaxou l'a signalé le 05/10/2026, capture à l'appui — son
+/// écran annonçait « Partage décoché : rien n'est lu » avec l'interrupteur
+/// allumé.
+///
+/// La vraie protection est la signature de `demarrer`, qui exige désormais les
+/// réglages et rend l'oubli impossible. Ce test garde l'invariant qu'elle sert.
+#[test]
+fn appliquer_les_reglages_ouvre_la_lecture() {
+    use xiiinrv_meter_lib::xiiinrv::envoi::configurer;
+
+    let _garde = VERROU.lock().unwrap_or_else(|e| e.into_inner());
+
+    configurer(Some("jeton-de-test".to_string()), None, true);
+    assert!(
+        collecte::lecture_ouverte(),
+        "partage actif : la lecture doit être ouverte, sinon aucun paquet n'est regardé"
+    );
+
+    configurer(Some("jeton-de-test".to_string()), None, false);
+    assert!(
+        !collecte::lecture_ouverte(),
+        "partage inactif : la lecture doit être fermée, rien ne doit être lu"
+    );
+
+    // Et l'état rendu à l'interface doit dire la même chose que la lecture :
+    // c'est leur désaccord qui avait mis la puce à l'oreille.
+    configurer(Some("jeton-de-test".to_string()), None, true);
+    let etat = xiiinrv_meter_lib::xiiinrv::etat_partage();
+    assert!(
+        etat.actif && collecte::lecture_ouverte(),
+        "l'état affiché et la lecture réelle doivent s'accorder"
+    );
+
+    configurer(None, None, false);
+    collecte::vider();
+}

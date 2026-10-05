@@ -201,7 +201,25 @@ fn extraire_message(corps: &str) -> Option<String> {
 }
 
 /// Boucle de fond. Elle ne fait rien tant qu'il n'y a ni jeton ni partage coché.
-pub fn demarrer() {
+/// Démarre le partage, **après** avoir appliqué les réglages enregistrés.
+///
+/// Les réglages sont exigés en paramètre, et ce n'est pas un détail de style :
+/// avant le 05/10/2026, `configurer()` n'était appelé que lorsqu'on touchait un
+/// réglage dans l'interface. Au lancement, personne ne relisait `settings.json`,
+/// le partage restait inactif en mémoire et la lecture des paquets était fermée
+/// — alors que la case de l'interface s'affichait cochée, puisqu'elle lit le
+/// fichier. Plus rien n'était lu tant que le membre n'allait pas décocher puis
+/// recocher sa case, ce qui ressemblait à des pertes de reconnaissance
+/// aléatoires.
+///
+/// En les prenant en paramètre, la signature rend cet oubli impossible : on ne
+/// peut plus démarrer sans dire dans quel état.
+pub fn demarrer(jeton: Option<String>, url: Option<String>, actif: bool) {
+    configurer(jeton, url, actif);
+    demarrer_la_boucle();
+}
+
+fn demarrer_la_boucle() {
     // Même mécanisme que le reste d'A2Tools : c'est la boucle asynchrone de
     // Tauri qui héberge la tâche, pas un runtime que nous créerions nous-mêmes.
     tauri::async_runtime::spawn(async move {

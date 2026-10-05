@@ -2035,10 +2035,32 @@ pub fn run() {
                 }
             });
 
-            // Ajout XIII NRV : accès à la composition du groupe, pour rafraîchir
-            // l'Item Level et le Combat Power sans attendre une entrée en jeu.
+            // Ajout XIII NRV : relire les réglages du partage au démarrage.
+            //
+            // **C'est indispensable, et son absence a coûté cher.** `configurer()`
+            // n'était appelé que depuis `update_settings`, c'est-à-dire seulement
+            // quand on touchait un réglage dans l'interface. Au lancement,
+            // personne ne relisait `settings.json` : le partage restait inactif
+            // en mémoire et `ouvrir_lecture(false)` fermait la lecture, alors que
+            // la case de l'interface, elle, s'affichait bien cochée puisqu'elle
+            // lit le fichier.
+            //
+            // Autrement dit : à chaque démarrage du meter, plus rien n'était lu
+            // tant que le membre n'allait pas décocher puis recocher la case. Ce
+            // qui explique les reconnaissances de fiche « aléatoires » signalées
+            // par barbaxou le 05/10/2026 — et son écran qui annonçait « Partage
+            // décoché : rien n'est lu » avec l'interrupteur allumé.
+            // Accès à la composition du groupe, pour rafraîchir l'Item Level et
+            // le Combat Power sans attendre une entrée en jeu.
             crate::xiiinrv::collecte::brancher_le_groupe(data_storage.clone());
-            crate::xiiinrv::demarrer();
+            {
+                let etat = app.state::<AppState>();
+                crate::xiiinrv::demarrer(
+                    etat.settings.get(crate::xiiinrv::CLE_JETON),
+                    etat.settings.get(crate::xiiinrv::CLE_URL),
+                    etat.settings.get(crate::xiiinrv::CLE_ACTIF).as_deref() == Some("true"),
+                );
+            }
 
             // Le nom détecté par A2Tools sert de filet quand la fiche de
             // personnage n'a pas été vue (elle n'arrive qu'à l'entrée en jeu).
