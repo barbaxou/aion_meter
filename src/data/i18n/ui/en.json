@@ -41,7 +41,8 @@
     "screenshot": {
       "ariaLabel": "Save screenshot to clipboard",
       "captured": "Captured Screenshot",
-      "savedToClipboard": "Saved to clipboard"
+      "savedToClipboard": "Saved to clipboard",
+      "failed": "Screenshot failed"
     },
     "sort": {
       "recent": "Recent",
@@ -85,21 +86,30 @@
       "maxDmgTooltip": "Max Damage"
     },
     "stats": {
-      "totalDamage": "Total Damage",
-      "contribution": "Contribution",
-      "hits": "Hits",
-      "critRate": "Crit Rate",
-      "perfectRate": "Perfect Rate",
-      "doubleRate": "Double Rate",
       "backRate": "Back Attack Rate",
-      "parryRate": "Parry Rate",
       "combatTime": "Combat Time",
-      "selfHealing": "Self-Healing",
+      "contribution": "Contribution",
+      "critRate": "Crit Rate",
+      "damageReceived": "Damage Taken",
+      "doubleRate": "Double Rate",
+      "healSkills": "Skills",
+      "healTicks": "Heal Ticks",
+      "hits": "Hits",
+      "hitsReceived": "Hits Taken",
+      "hotTicks": "HoT Ticks",
+      "hps": "HPS",
+      "maxHp": "Max HP",
       "multiHitDamage": "Multi-Hit Damage",
       "multiHitHits": "Multi-Hits",
-      "maxHp": "Max HP",
-      "damageReceived": "Damage Taken",
-      "hitsReceived": "Hits Taken"
+      "parryRate": "Parry Rate",
+      "partyHeal": "Party Heal",
+      "perfectRate": "Perfect Rate",
+      "powershardRate": "P.Shard Rate",
+      "regen": "Regen",
+      "selfHealing": "Self-Healing",
+      "smiteRate": "Smite Rate",
+      "totalDamage": "Total Damage",
+      "totalHealing": "Total Healing"
     },
     "titleFor": "for",
     "titleVs": "vs",
@@ -114,6 +124,9 @@
     "mode": {
       "dmg": "DMG",
       "heal": "HEAL"
+    },
+    "refresh": {
+      "loading": "Loading…"
     }
   },
   "history": {

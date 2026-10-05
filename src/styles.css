@@ -6292,7 +6292,9 @@ body.legacyUi .list .item .dps .dpsContribution {
   padding: 8px 14px 9px;
 }
 .detailsPanel .detailsStats .stat {
-  align-items: baseline;
+  /* `start` et non `baseline` : un libellé sur deux lignes doit s'aligner par
+     le haut avec sa valeur, sinon la valeur descend avec lui. */
+  align-items: start;
   gap: 10px;
   min-height: 23px;
   padding: 2px 0;
@@ -6302,11 +6304,24 @@ body.legacyUi .list .item .dps .dpsContribution {
   font-variation-settings: "wght" 600, "wdth" 75;
   font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.13em;
+  /* Correction XIII NRV : le libellé passe à la ligne au lieu d'être coupé.
+     Il était en `nowrap` avec `text-overflow: ellipsis`, ce qui tronquait les
+     intitulés longs dès que la fenêtre n'était pas large — « Dégâts des coups
+     multiples » devenait « DÉGÂTS DES COUPS M… ». Signalé par barbaxou, qui ne
+     voulait pas obliger les membres à ouvrir la fenêtre en grand.
+
+     L'interlettrage passe de 0,13 à 0,08em : en capitales, 0,13em coûtait près
+     de 5 % de largeur pour un gain de lisibilité discutable sur des intitulés
+     français, plus longs que les anglais d'origine.
+
+     Mesuré sur les quatorze statistiques, de 360 à 900 px de large : plus aucun
+     libellé coupé, à aucune largeur, pour six pixels de hauteur en plus. */
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  overflow-wrap: break-word;
+  line-height: 1.25;
+  padding-top: 1px;
   color: var(--hud-sub);
 }
 .detailsPanel .detailsStats .stat .value {

@@ -835,26 +835,40 @@ const createDetailsUI = ({
   };
 
   // Column definitions: name → grid track template fragment
+  // Chaque minimum est calé sur la largeur réelle de son en-tête, mesurée au
+  // pixel sur le rendu, plus trois pixels de marge.
+  //
+  // Correction XIII NRV : ils valaient 18 à 26 px pour des en-têtes qui en
+  // demandent 25 à 40, et le texte était rogné des deux côtés — « BACK » et
+  // « FRONT » se lisaient « ACK » et « IONT », à **toutes** les largeurs de
+  // fenêtre, jusqu'à 900 px. Le commentaire conservé sous `frontal` avait vu le
+  // symptôme et ajusté la part `fr`, ce qui ne change rien quand c'est le
+  // minimum qui s'applique.
+  //
+  // Sous 760 px le tableau défile maintenant horizontalement au lieu de se
+  // comprimer : un en-tête illisible renseigne moins qu'une barre de défilement.
+  // Signalé par barbaxou, qui ne voulait pas obliger les membres à ouvrir la
+  // fenêtre en grand.
   const GRID_COL_DEFS = {
     name: "minmax(90px, 3fr)",
-    hit: "minmax(38px, 0.75fr)",
+    hit: "minmax(42px, 0.75fr)",
     dmg: "minmax(36px, 1.0fr)",
     dmgpct: "minmax(26px, 0.85fr)",
-    mhit: "minmax(20px, 0.6fr)",
+    mhit: "minmax(31px, 0.6fr)",
     mdmg: "minmax(30px, 0.9fr)",
-    crit: "minmax(24px, 0.65fr)",
-    parry: "minmax(20px, 0.6fr)",
-    perfect: "minmax(22px, 0.65fr)",
-    double: "minmax(22px, 0.65fr)",
-    back: "minmax(18px, 0.6fr)",
+    crit: "minmax(31px, 0.65fr)",
+    parry: "minmax(28px, 0.6fr)",
+    perfect: "minmax(28px, 0.65fr)",
+    double: "minmax(28px, 0.65fr)",
+    back: "minmax(36px, 0.6fr)",
     // "FRONT" is the widest header in the 0.6fr group and clips at the shared
     // share; it needs the extra room its neighbours don't.
-    frontal: "minmax(20px, 0.72fr)",
+    frontal: "minmax(43px, 0.72fr)",
     powershard: "minmax(20px, 0.6fr)",
     regen: "minmax(28px, 0.8fr)",
     mindmg: "minmax(28px, 0.8fr)",
     avgdmg: "minmax(28px, 0.8fr)",
-    maxdmg: "minmax(28px, 0.8fr)",
+    maxdmg: "minmax(29px, 0.8fr)",
   };
   const GRID_COL_ORDER = ["name", "hit", "dmg", "dmgpct", "mhit", "mdmg", "crit", "parry", "perfect", "double", "back", "frontal", "powershard", "regen", "mindmg", "avgdmg", "maxdmg"];
 

@@ -545,11 +545,20 @@ impl DataStorage {
                     );
                     return;
                 }
+                // Le type et les marques sont tracés pour une raison précise :
+                // le 05/10/2026, sur un combat contre Kwapo, le jeu annonçait
+                // « 6 072 sur 3 coups » quand nous additionnions trois coups à
+                // 9 880. Son détail disait « Received Hits (Proportion) 2
+                // (67 %) » : des trois coups, un n'avait pas porté, et son
+                // montant — 3 808, exactement notre écart — n'était pas compté.
+                // Reste à trouver ce qui, dans le paquet, distingue ce coup-là.
                 tracing::debug!(
                     "XIII NRV : coup reçu — acteur {} cible {} compétence {} : \
-                     {} dégâts (sur la durée : {} ; champ multi ignoré : {} pour {} coups)",
+                     {} dégâts (sur la durée : {} ; type {} ; marques {:?} ; \
+                     champ multi ignoré : {} pour {} coups)",
                     actor_id, resolved_target, skill_code, pdp.damage(),
-                    pdp.is_dot(), pdp.multi_hit_damage(), pdp.multi_hit_count()
+                    pdp.is_dot(), pdp.damage_type(), pdp.specials(),
+                    pdp.multi_hit_damage(), pdp.multi_hit_count()
                 );
                 for target_data in inner.target_combat.values_mut() {
                     if let Some(actor_data) = target_data.actors.get_mut(&resolved_target) {

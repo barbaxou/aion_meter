@@ -41,7 +41,8 @@
     "screenshot": {
       "ariaLabel": "Copier la capture dans le presse-papiers",
       "captured": "Capture effectuée",
-      "savedToClipboard": "Copiée dans le presse-papiers"
+      "savedToClipboard": "Copiée dans le presse-papiers",
+      "failed": "La capture d'écran a échoué"
     },
     "sort": {
       "recent": "Récent",
@@ -85,21 +86,30 @@
       "maxDmgTooltip": "Dégâts max."
     },
     "stats": {
-      "totalDamage": "Dégâts totaux",
-      "contribution": "Contribution",
-      "hits": "Coups",
-      "critRate": "Taux de critique",
-      "perfectRate": "Taux de parfait",
-      "doubleRate": "Taux de double",
       "backRate": "Taux d'attaque dans le dos",
-      "parryRate": "Taux de parade",
       "combatTime": "Temps de combat",
-      "selfHealing": "Auto-soin",
+      "contribution": "Contribution",
+      "critRate": "Taux de critique",
+      "damageReceived": "Dégâts subis",
+      "doubleRate": "Taux de double",
+      "healSkills": "Compétences",
+      "healTicks": "Ticks de soin",
+      "hits": "Coups",
+      "hitsReceived": "Coups reçus",
+      "hotTicks": "Ticks sur la durée",
+      "hps": "Soins/s",
+      "maxHp": "PV max.",
       "multiHitDamage": "Dégâts des coups multiples",
       "multiHitHits": "Coups multiples",
-      "maxHp": "PV max.",
-      "damageReceived": "Dégâts subis",
-      "hitsReceived": "Coups reçus"
+      "parryRate": "Taux de parade",
+      "partyHeal": "Soins au groupe",
+      "perfectRate": "Taux de parfait",
+      "powershardRate": "Taux d'éclat",
+      "regen": "Régénération",
+      "selfHealing": "Auto-soin",
+      "smiteRate": "Taux de châtiment",
+      "totalDamage": "Dégâts totaux",
+      "totalHealing": "Soins totaux"
     },
     "titleFor": "pour",
     "titleVs": "contre",
@@ -114,6 +124,9 @@
     "mode": {
       "dmg": "Dégâts",
       "heal": "Soins"
+    },
+    "refresh": {
+      "loading": "Chargement…"
     }
   },
   "history": {
