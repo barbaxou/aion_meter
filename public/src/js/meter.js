@@ -329,8 +329,19 @@ const createMeterUI = ({
           // Les images sont recopiées à la racine dans l'application installée,
           // mais restent sous src/ pendant le développement : si la première
           // adresse échoue, on essaie l'autre une fois.
+          //
+          // Et si la seconde échoue aussi, on cache l'image au lieu de laisser
+          // l'icône cassée du navigateur. Ce n'est pas théorique : tant que la
+          // classe n'est pas connue — au lancement, avant le premier combat —
+          // elle vaut « Unknown », et aucun fichier ne porte ce nom. barbaxou l'a
+          // vu le 05/10/2026 sur la première ligne affichée.
           view.classIconImg.onerror = () => {
-            view.classIconImg.onerror = null;
+            view.classIconImg.onerror = () => {
+              view.classIconImg.onerror = null;
+              view.classIconImg.removeAttribute("src");
+              view.classIconImg.style.visibility = "hidden";
+              view.lastClassIconSrc = "";
+            };
             view.classIconImg.src = `./src/assets/${row.job}.png`;
           };
           view.classIconImg.src = src;

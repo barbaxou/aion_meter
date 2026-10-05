@@ -511,7 +511,27 @@ impl DataStorage {
             // Track damage received on the player target
             let resolved_target = summon_resolver::resolve(target_id, &inner.summon_storage);
             if inner.known_player_ids.contains(&resolved_target) {
-                let dmg = pdp.total_damage() as i64;
+                // Ajout XIII NRV : `damage()` et non `total_damage()`, qui y
+                // ajoute `multi_hit_damage`.
+                //
+                // Sur un coup de monstre réel, relevé le 05/10/2026 (boss 24470
+                // frappant le joueur 6891, compétence 1606940) : dégâts 5 398,
+                // et un prétendu « multi » de 8 047 pour **un seul** multi-coup.
+                // Le champ ne porte donc pas ce que le parseur croit sur ce type
+                // de paquet. En l'additionnant, le total subi du combat montait à
+                // 48 706 quand l'analyseur du jeu en affichait 17 766 — presque
+                // trois fois trop.
+                //
+                // Prudence assumée : on préfère sous-compter que publier un
+                // chiffre gonflé. Reste à vérifier en jeu, et c'est pour cela
+                // que la trace ci-dessous existe.
+                let dmg = pdp.damage() as i64;
+                tracing::debug!(
+                    "XIII NRV : coup reçu — acteur {} cible {} compétence {} : \
+                     {} dégâts (champ multi ignoré : {} pour {} coups)",
+                    actor_id, resolved_target, skill_code,
+                    pdp.damage(), pdp.multi_hit_damage(), pdp.multi_hit_count()
+                );
                 for target_data in inner.target_combat.values_mut() {
                     if let Some(actor_data) = target_data.actors.get_mut(&resolved_target) {
                         actor_data.damage_received += dmg;
