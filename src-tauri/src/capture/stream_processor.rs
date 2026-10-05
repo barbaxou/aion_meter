@@ -1776,10 +1776,21 @@ impl StreamProcessor {
                 break;
             }
 
-            // Skip 7-digit NPC skills
-            if (1_000_000..=9_999_999).contains(&exact_skill_code) {
-                break;
-            }
+            // Les compétences de monstres, à sept chiffres, sont les coups que
+            // le joueur *reçoit*. On les laisse passer : `DataStorage::append_damage`
+            // les attend — il porte exactement la même plage — pour alimenter
+            // `damage_received`.
+            //
+            // Correction XIII NRV. Cette ligne faisait `break`, et jetait donc
+            // précisément ce que l'autre bout du code guettait : le compteur de
+            // dégâts subis existait, complet, et n'était jamais atteint. Pire,
+            // le `break` sortait de la boucle des coups **chaînés** : un paquet
+            // portant plusieurs coups dont un de monstre perdait aussi tous les
+            // suivants. Mesuré sur un journal réel, cela coûtait environ 70 %
+            // des dégâts donnés en rejeu.
+            //
+            // Validé par `tests/xiiinrv_degats_subis.rs` contre l'analyseur de
+            // combat du jeu, sur deux combats du 05/10/2026.
 
             // Skip 1-byte UID field
             if offset < packet.len() {
