@@ -259,16 +259,39 @@ impl PcapLib {
         // chiffre près.
         //
         // Doit être appelé après l'ouverture et avant la première lecture.
-        if let Some(set_buff) = self.set_buff {
-            const TAMPON: c_int = 32 * 1024 * 1024;
-            let code = unsafe { set_buff(handle, TAMPON) };
-            if code != 0 {
-                tracing::warn!(
-                    "XIII NRV : tampon de capture non agrandi sur {} (code {})",
-                    name,
-                    code
-                );
+        //
+        // On journalise les deux issues, et l'absence du symbole. Un diagnostic
+        // qui ne parle qu'en cas d'échec laisse croire que tout va bien quand
+        // c'est la mesure elle-même qui manque — l'erreur commise le 30/09 en
+        // lisant un `strings` vide comme une bonne nouvelle.
+        match self.set_buff {
+            Some(set_buff) => {
+                const TAMPON: c_int = 32 * 1024 * 1024;
+                let code = unsafe { set_buff(handle, TAMPON) };
+                if code == 0 {
+                    tracing::info!(
+                        "XIII NRV : tampon de capture porté à {} Mo sur {}",
+                        TAMPON / (1024 * 1024),
+                        name
+                    );
+                } else {
+                    tracing::warn!(
+                        "XIII NRV : tampon de capture non agrandi sur {} (code {}) —                          les pertes seront plus probables en combat de groupe",
+                        name,
+                        code
+                    );
+                }
             }
+            None => tracing::warn!(
+                "XIII NRV : `pcap_setbuff` absent de cette installation — le tampon                  reste au défaut de Npcap sur {}, qui est petit",
+                name
+            ),
+        }
+        if self.stats.is_none() {
+            tracing::warn!(
+                "XIII NRV : `pcap_stats` absent — impossible de savoir si des paquets                  sont perdus sur {}. L'absence d'alerte ne vaudra pas absence de perte.",
+                name
+            );
         }
 
         Ok(handle)
@@ -448,14 +471,29 @@ fn start_capture_thread(
             if vus % 20_000 == 0 {
                 if let Some(stats) = pcap.stats {
                     let mut compteurs = PcapStat::default();
-                    if unsafe { stats(handle, &mut compteurs) } == 0
-                        && compteurs.ps_drop > derniers_perdus
-                    {
-                        let nouveaux = compteurs.ps_drop - derniers_perdus;
+                    if unsafe { stats(handle, &mut compteurs) } == 0 {
+                        let nouveaux = compteurs.ps_drop.saturating_sub(derniers_perdus);
                         derniers_perdus = compteurs.ps_drop;
-                        warn!(
-                            "XIII NRV : {} paquets perdus à la capture sur {} ({} au total, {} reçus)",
-                            nouveaux, label, compteurs.ps_drop, compteurs.ps_recv
+                        if nouveaux > 0 {
+                            warn!(
+                                "XIII NRV : {} paquets perdus à la capture sur {}                                  ({} au total, {} reçus, {} perdus par la carte)",
+                                nouveaux, label, compteurs.ps_drop,
+                                compteurs.ps_recv, compteurs.ps_ifdrop
+                            );
+                        } else {
+                            // Dire aussi que tout va bien : sans ce relevé, un
+                            // journal muet peut vouloir dire « aucune perte »
+                            // comme « la mesure ne tourne pas », et c'est
+                            // précisément ce qu'on cherche à distinguer.
+                            tracing::debug!(
+                                "XIII NRV : capture saine sur {} — {} trames vues,                                  {} reçues par le pilote, aucune perte (total {})",
+                                label, vus, compteurs.ps_recv, compteurs.ps_drop
+                            );
+                        }
+                    } else {
+                        tracing::debug!(
+                            "XIII NRV : `pcap_stats` a échoué sur {} — pas de mesure de perte",
+                            label
                         );
                     }
                 }

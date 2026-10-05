@@ -160,6 +160,12 @@ impl CaptureDispatcher {
         let mut window_logged: Option<bool> = None;
         let mut unlocked_stats = UnlockedStats::default();
         let mut last_unlocked_report_ms = now_ms();
+        // Ajout XIII NRV : voir plus bas. Reçues = ce qui franchit la fenêtre du
+        // jeu ; traitées = ce qui atteint vraiment le lecteur.
+        let mut compte_recues: u64 = 0;
+        let mut compte_traitees: u64 = 0;
+        let mut compte_octets: u64 = 0;
+        let mut dernier_bilan_ms = now_ms();
 
         while let Some(cap) = receiver.recv().await {
             if self.suspended.load(Ordering::SeqCst) {
@@ -207,6 +213,27 @@ impl CaptureDispatcher {
                 last_unlocked_report_ms = now;
             }
 
+            // Bilan toutes les trente secondes, une fois le flux verrouillé :
+            // combien de morceaux sont arrivés, combien ont été lus, et à quel
+            // débit. Un écart ici désigne nos filtres ; un journal muet côté
+            // `pcap_stats` avec un écart ici désigne notre traitement.
+            if self.port_detector.current_port().is_some() && now - dernier_bilan_ms >= 30_000 {
+                let secondes = (now - dernier_bilan_ms) as f64 / 1000.0;
+                info!(
+                    "XIII NRV : {} morceaux reçus, {} lus ({} écartés par les filtres),                      {:.1} Mo en {:.0} s, soit {:.1} Mo/s",
+                    compte_recues,
+                    compte_traitees,
+                    compte_recues.saturating_sub(compte_traitees),
+                    compte_octets as f64 / 1e6,
+                    secondes,
+                    compte_octets as f64 / 1e6 / secondes.max(1.0)
+                );
+                compte_recues = 0;
+                compte_traitees = 0;
+                compte_octets = 0;
+                dernier_bilan_ms = now;
+            }
+
             if !is_aion_running {
                 continue;
             }
@@ -225,6 +252,17 @@ impl CaptureDispatcher {
 
             let current_port = self.port_detector.current_port();
             let locked_device = self.port_detector.current_device();
+
+            // Ajout XIII NRV : situer la perte. En solo nos totaux tombent au
+            // chiffre près sur l'analyseur du jeu ; à cinq en donjon il manque
+            // 18 % des dégâts et 13 % des coups (mesuré le 05/10/2026 sur deux
+            // boss). Reste à savoir où ils disparaissent — avant nous, dans le
+            // pilote de capture, ou chez nous, dans ces filtres.
+            //
+            // `pcap_stats` répond pour le pilote. Ces compteurs répondent pour
+            // nous : ce qui entre dans le répartiteur et ce qui en ressort.
+            compte_recues += 1;
+            compte_octets += cap.data.len() as u64;
 
             // Device filter
             if let Some(ref dev) = locked_device {
@@ -327,6 +365,7 @@ impl CaptureDispatcher {
             // coups : mesuré le 02/10/2026, huit coups horodatés onze secondes
             // après le dernier échange réel, étirant le combat de 151 à 162
             // secondes et abaissant le DPS de chacun de 9 %.
+            compte_traitees += 1;
             processor.set_capture_time(cap.captured_at_ms);
             let parsed = assembler.process_chunk(&cap.data, processor);
 
