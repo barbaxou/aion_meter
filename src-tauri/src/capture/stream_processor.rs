@@ -92,6 +92,63 @@ pub mod diag_arrets {
     /// paquet : ce sont ceux qui emportent une chaîne en cours.
     pub static ARRET_EN_CHAINE: AtomicU64 = AtomicU64::new(0);
 
+    /// La cible refusée est-elle un vrai coup, ou du bruit ?
+    ///
+    /// Le garde-fou `is_plausible_entity_id` refuse les identifiants sous 100.
+    /// Il coupe 73 % de nos chaînes de coups (mesuré le 05/10/2026) et deux
+    /// lectures restaient possibles : soit ce sont de vraies cibles à petit
+    /// identifiant et il se trompe, soit le découpage a dérivé et il fait son
+    /// travail. L'assouplir serait une erreur dans le second cas — on
+    /// fabriquerait des coups.
+    ///
+    /// Pour trancher, on relit la suite **sans rien modifier** : si un switch
+    /// valide, un acteur plausible et un code de compétence crédible suivent,
+    /// c'est que le paquet était bien aligné et qu'on a refusé un vrai coup.
+    pub static SUITE_CREDIBLE: AtomicU64 = AtomicU64::new(0);
+    pub static SUITE_INCOHERENTE: AtomicU64 = AtomicU64::new(0);
+    /// Combien de fois chaque valeur 0..=99 a été refusée. Une poignée de
+    /// valeurs récurrentes désigne de vraies entités ; une purée uniforme
+    /// désigne du bruit.
+    pub static VALEURS_REFUSEES: [AtomicU64; 100] = {
+        #[allow(clippy::declare_interior_mutable_const)]
+        const Z: AtomicU64 = AtomicU64::new(0);
+        [Z; 100]
+    };
+    /// Les valeurs négatives ou au-delà de 99 n'existent pas ici (le garde-fou
+    /// laisse passer ≥ 100), mais une lecture ratée rend `None` : on la compte.
+    pub static VALEUR_ILLISIBLE: AtomicU64 = AtomicU64::new(0);
+
+    pub fn noter_cible_refusee(valeur: Option<i32>, suite_credible: bool) {
+        match valeur {
+            Some(v) if (0..100).contains(&v) => {
+                VALEURS_REFUSEES[v as usize].fetch_add(1, Relaxed);
+            }
+            Some(_) => {}
+            None => {
+                VALEUR_ILLISIBLE.fetch_add(1, Relaxed);
+            }
+        }
+        if suite_credible {
+            SUITE_CREDIBLE.fetch_add(1, Relaxed);
+        } else {
+            SUITE_INCOHERENTE.fetch_add(1, Relaxed);
+        }
+    }
+
+    /// Les valeurs refusées les plus fréquentes, pour le journal.
+    pub fn valeurs_frequentes() -> String {
+        let mut v: Vec<(usize, u64)> = (0..100)
+            .map(|i| (i, VALEURS_REFUSEES[i].load(Relaxed)))
+            .filter(|(_, n)| *n > 0)
+            .collect();
+        v.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
+        v.truncate(8);
+        v.iter()
+            .map(|(i, n)| format!("{i}×{n}"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
     pub fn bilan() -> String {
         let l = |c: &AtomicU64| c.load(Relaxed);
         format!(
@@ -101,6 +158,15 @@ pub mod diag_arrets {
             l(&DRAPEAU_ABSENT), l(&ACTEUR_IMPLAUSIBLE),
             l(&COMPETENCE_TRONQUEE), l(&COMPETENCE_HORS_PLAGE),
             l(&TYPE_ABSENT), l(&FIN_PREMATUREE), l(&VALEUR_ABSENTE)
+        )
+    }
+
+    pub fn bilan_cibles() -> String {
+        let l = |c: &AtomicU64| c.load(Relaxed);
+        format!(
+            "cibles refusées — suite crédible {} / incohérente {} | illisibles {} |              valeurs les plus vues : {}",
+            l(&SUITE_CREDIBLE), l(&SUITE_INCOHERENTE), l(&VALEUR_ILLISIBLE),
+            valeurs_frequentes()
         )
     }
 }
@@ -1780,11 +1846,16 @@ impl StreamProcessor {
             // silently dropped. Ids a spawn or identity record has confirmed are
             // let through; unconfirmed small values still bail out, so the gate
             // keeps doing its job.
-            let target_value = match try_read_varint(packet, &mut offset) {
+            let lue = try_read_varint(packet, &mut offset);
+            let target_value = match lue {
                 Some(v) if self.data_storage.is_plausible_entity_id(v) => v,
                 _ => {
                     DA::CIBLE_IMPLAUSIBLE.fetch_add(1, Relaxed);
                     if parsed_any { DA::ARRET_EN_CHAINE.fetch_add(1, Relaxed); }
+                    // Quelle valeur a été refusée, et la suite tient-elle debout ?
+                    let credible =
+                        suite_ressemble_a_un_coup(packet, offset, &self.data_storage);
+                    DA::noter_cible_refusee(lue, credible);
                     break;
                 }
             };
@@ -2304,6 +2375,45 @@ pub fn read_varint(bytes: &[u8], offset: usize) -> VarIntResult {
             return VarIntResult::invalid();
         }
     }
+}
+
+/// Ajout XIII NRV : ce qui suit une cible refusée ressemble-t-il à un coup ?
+///
+/// On relit le paquet à partir de l'offset courant, **sans rien modifier et
+/// sans rien enregistrer** : switch valide, drapeau lisible, acteur plausible,
+/// code de compétence crédible. Si les quatre tombent juste, le paquet était
+/// bien aligné et la cible refusée était une vraie cible — un coup perdu. Sinon
+/// le découpage avait dérivé, et le garde-fou a bien fait son travail.
+///
+/// C'est la mesure qui décidera s'il faut assouplir ce garde-fou ou le laisser.
+fn suite_ressemble_a_un_coup(
+    packet: &[u8],
+    mut offset: usize,
+    storage: &crate::combat::data_storage::DataStorage,
+) -> bool {
+    let Some(switch) = try_read_varint(packet, &mut offset) else {
+        return false;
+    };
+    if !(4..=7).contains(&(switch & 0x0F)) {
+        return false;
+    }
+    if try_read_varint(packet, &mut offset).is_none() {
+        return false;
+    }
+    let Some(acteur) = try_read_varint(packet, &mut offset) else {
+        return false;
+    };
+    if !storage.is_plausible_entity_id(acteur) {
+        return false;
+    }
+    if offset + 4 > packet.len() {
+        return false;
+    }
+    let code = i64::from(packet[offset] as u32)
+        | (i64::from(packet[offset + 1] as u32) << 8)
+        | (i64::from(packet[offset + 2] as u32) << 16)
+        | (i64::from(packet[offset + 3] as u32) << 24);
+    (1..=299_999_999).contains(&code)
 }
 
 fn try_read_varint(bytes: &[u8], offset: &mut usize) -> Option<i32> {

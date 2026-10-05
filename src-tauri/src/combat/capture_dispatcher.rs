@@ -235,6 +235,10 @@ impl CaptureDispatcher {
                     "XIII NRV : lecture des dégâts — {}",
                     crate::capture::stream_processor::diag_arrets::bilan()
                 );
+                info!(
+                    "XIII NRV : {}",
+                    crate::capture::stream_processor::diag_arrets::bilan_cibles()
+                );
                 compte_recues = 0;
                 compte_traitees = 0;
                 compte_octets = 0;
