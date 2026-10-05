@@ -526,11 +526,30 @@ impl DataStorage {
                 // chiffre gonflé. Reste à vérifier en jeu, et c'est pour cela
                 // que la trace ci-dessous existe.
                 let dmg = pdp.damage() as i64;
+
+                // Les dégâts sur la durée ne comptent pas, parce que le jeu ne
+                // les compte pas non plus. Relevé le 05/10/2026 sur un combat
+                // contre Nuakum : onze coups de la compétence 1800000, tous de
+                // montants différents, et onze ticks de la 1802000 valant **516
+                // exactement**, espacés de deux secondes. L'analyseur du jeu
+                // affichait « 69 847 sur 11 coups » — les onze coups, sans les
+                // onze ticks. En les comptant, nous annoncions 76 452 sur 22 ;
+                // sans eux, 70 776 sur 11, soit 1,3 % d'écart.
+                //
+                // C'est la même règle que pour les coups donnés, dont le
+                // « Total Hits » du jeu exclut déjà les ticks.
+                if pdp.is_dot() {
+                    tracing::debug!(
+                        "XIII NRV : tick sur la durée écarté — compétence {} : {} dégâts",
+                        skill_code, dmg
+                    );
+                    return;
+                }
                 tracing::debug!(
                     "XIII NRV : coup reçu — acteur {} cible {} compétence {} : \
-                     {} dégâts (champ multi ignoré : {} pour {} coups)",
-                    actor_id, resolved_target, skill_code,
-                    pdp.damage(), pdp.multi_hit_damage(), pdp.multi_hit_count()
+                     {} dégâts (sur la durée : {} ; champ multi ignoré : {} pour {} coups)",
+                    actor_id, resolved_target, skill_code, pdp.damage(),
+                    pdp.is_dot(), pdp.multi_hit_damage(), pdp.multi_hit_count()
                 );
                 for target_data in inner.target_combat.values_mut() {
                     if let Some(actor_data) = target_data.actors.get_mut(&resolved_target) {
