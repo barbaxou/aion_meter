@@ -261,3 +261,37 @@ fn demarrer_la_boucle() {
         }
     });
 }
+
+/// Une ligne d'état pour le journal : ce que le partage fait réellement.
+///
+/// Elle dit, d'un seul tenant, la case à cocher, l'état réel de la lecture, la
+/// présence du jeton et le contenu de la fiche. C'est précisément le désaccord
+/// entre la case et la lecture qui avait mis sur la voie du défaut du 05/10 ;
+/// sans cette ligne, il fallait une capture d'écran du membre pour le voir.
+///
+/// Elle ne contient **ni le jeton, ni l'URL, ni aucun nom d'objet** : le journal
+/// est un fichier que le membre peut transmettre.
+pub fn resume_pour_journal() -> String {
+    let e = etat_partage();
+    let fiche = lire_etat();
+    format!(
+        "partage {} | lecture {} | jeton {} | {} — niveau {:?}, Item Level {:?}, \
+         Combat Power {:?}, PV {:?}, PM {:?} | {} pièces, {} pets | dernier message : {}",
+        if e.actif { "coché" } else { "décoché" },
+        if crate::xiiinrv::collecte::lecture_ouverte() {
+            "ouverte"
+        } else {
+            "FERMÉE"
+        },
+        if e.jeton_present { "présent" } else { "absent" },
+        e.personnage.as_deref().unwrap_or("(pas de nom)"),
+        e.niveau,
+        fiche.item_level,
+        e.combat_power,
+        fiche.pv,
+        fiche.pm,
+        e.pieces,
+        e.pets,
+        e.dernier_message.as_deref().unwrap_or("—"),
+    )
+}

@@ -2066,12 +2066,30 @@ pub fn run() {
             // personnage n'a pas été vue (elle n'arrive qu'à l'entrée en jeu).
             let nom_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
+                // État du partage dans le journal : sur changement, **et** par
+                // battement toutes les 60 s.
+                //
+                // Le 06/10/2026, le module de partage n'a produit aucune ligne
+                // de toute une session alors qu'il avait bel et bien travaillé —
+                // l'écran du meter montrait un envoi réussi. De ce silence, trois
+                // conclusions fausses ont été tirées dans la même soirée, dont
+                // « le partage est fermé ». Un journal qui ne parle que sur
+                // événement ne permet pas de distinguer « rien ne se passe » de
+                // « rien n'est écrit » : d'où le battement, qui vaut témoin.
+                let mut dernier = String::new();
+                let mut depuis = std::time::Instant::now();
                 loop {
                     tokio::time::sleep(std::time::Duration::from_secs(15)).await;
                     if let Some(etat) = nom_handle.try_state::<AppState>() {
                         crate::xiiinrv::collecte::nom_detecte(
                             etat.data_storage.local_character_name(),
                         );
+                    }
+                    let resume = crate::xiiinrv::envoi::resume_pour_journal();
+                    if resume != dernier || depuis.elapsed().as_secs() >= 60 {
+                        tracing::info!("XIII NRV : {}", resume);
+                        dernier = resume;
+                        depuis = std::time::Instant::now();
                     }
                 }
             });

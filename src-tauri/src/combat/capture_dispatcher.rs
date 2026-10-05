@@ -157,7 +157,15 @@ impl CaptureDispatcher {
         let mut sig_hits: HashMap<(u16, u16), (u32, i64)> = HashMap::new();
         let mut last_window_check_ms: i64 = 0;
         let mut is_aion_running = false;
-        let mut window_logged: Option<bool> = None;
+        // Le **titre** déjà journalisé, pas seulement « trouvée ou non ».
+        //
+        // N'en garder que le booléen laissait un angle mort : la fenêtre restant
+        // trouvée en continu, rien n'était écrit, et le journal ne distinguait pas
+        // « le titre ne s'est jamais vidé » de « il s'est vidé et la
+        // reconnaissance par programme l'a rattrapé ». Constaté le 06/10/2026 en
+        // vérifiant deux téléports de barbaxou : aucun verrou perdu, mais aucun
+        // moyen de dire pourquoi.
+        let mut window_logged: Option<Option<String>> = None;
         let mut unlocked_stats = UnlockedStats::default();
         let mut last_unlocked_report_ms = now_ms();
         // Ajout XIII NRV : voir plus bas. Reçues = ce qui franchit la fenêtre du
@@ -179,14 +187,14 @@ impl CaptureDispatcher {
                 last_window_check_ms = now;
                 let title = window_detector::find_aion2_window_title();
                 let running = title.is_some();
-                if window_logged != Some(running) {
+                if window_logged.as_ref() != Some(&title) {
                     match &title {
                         Some(t) => info!("AION2 window found: {:?}", t),
                         None => info!(
                             "No AION2 window found (looking for a title starting with \"AION2\", or a window owned by AION2.exe); packets are ignored until there is one"
                         ),
                     }
-                    window_logged = Some(running);
+                    window_logged = Some(title.clone());
                 }
                 if !running && is_aion_running {
                     self.port_detector.reset();
