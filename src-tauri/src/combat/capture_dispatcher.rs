@@ -228,6 +228,13 @@ impl CaptureDispatcher {
                     secondes,
                     compte_octets as f64 / 1e6 / secondes.max(1.0)
                 );
+                // Et où la lecture d'un paquet de dégâts s'arrête. Un arrêt en
+                // pleine chaîne emporte les coups qui suivaient dans le même
+                // paquet : c'est l'hypothèse pour les coups manquants en groupe.
+                info!(
+                    "XIII NRV : lecture des dégâts — {}",
+                    crate::capture::stream_processor::diag_arrets::bilan()
+                );
                 compte_recues = 0;
                 compte_traitees = 0;
                 compte_octets = 0;

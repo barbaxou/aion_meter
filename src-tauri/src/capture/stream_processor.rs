@@ -59,6 +59,52 @@ impl BoundedHashSet {
 
 /// The core binary protocol parser for AION 2 game packets.
 /// Ported exactly from Kotlin StreamProcessor.
+/// Ajout XIII NRV : où la lecture d'un paquet de dégâts s'arrête-t-elle, et que
+/// perd-on avec elle ?
+///
+/// La boucle de `parsing_damage_inner` lit les coups **chaînés** d'un même
+/// paquet les uns après les autres, et sort à la première anomalie. Elle perd
+/// donc aussi tous les coups qui suivaient. En solo un paquet porte peu de
+/// coups chaînés ; à cinq en donjon, beaucoup — ce qui expliquerait que nos
+/// totaux soient exacts seul et jusqu'à 28 % trop bas en groupe (mesuré le
+/// 05/10/2026, alors que la capture ne perdait aucun paquet).
+///
+/// Ces compteurs servent à le vérifier avant de corriger quoi que ce soit.
+pub mod diag_arrets {
+    use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+
+    /// Chaque raison de sortir de la boucle, dans l'ordre du code.
+    pub static CIBLE_IMPLAUSIBLE: AtomicU64 = AtomicU64::new(0);
+    pub static SWITCH_ABSENT: AtomicU64 = AtomicU64::new(0);
+    pub static SWITCH_HORS_PLAGE: AtomicU64 = AtomicU64::new(0);
+    pub static DRAPEAU_ABSENT: AtomicU64 = AtomicU64::new(0);
+    pub static ACTEUR_IMPLAUSIBLE: AtomicU64 = AtomicU64::new(0);
+    pub static COMPETENCE_TRONQUEE: AtomicU64 = AtomicU64::new(0);
+    pub static COMPETENCE_HORS_PLAGE: AtomicU64 = AtomicU64::new(0);
+    pub static TYPE_ABSENT: AtomicU64 = AtomicU64::new(0);
+    pub static FIN_PREMATUREE: AtomicU64 = AtomicU64::new(0);
+    pub static VALEUR_ABSENTE: AtomicU64 = AtomicU64::new(0);
+    /// Sorties normales : un coup lu, pas de marqueur de chaînage derrière.
+    pub static FIN_NORMALE: AtomicU64 = AtomicU64::new(0);
+    /// Coups effectivement rendus, pour rapporter les arrêts à quelque chose.
+    pub static COUPS_RENDUS: AtomicU64 = AtomicU64::new(0);
+    /// Arrêts survenus alors qu'au moins un coup avait déjà été lu dans le
+    /// paquet : ce sont ceux qui emportent une chaîne en cours.
+    pub static ARRET_EN_CHAINE: AtomicU64 = AtomicU64::new(0);
+
+    pub fn bilan() -> String {
+        let l = |c: &AtomicU64| c.load(Relaxed);
+        format!(
+            "coups rendus {} | fins normales {} | arrêts en pleine chaîne {} |              cible {} switch {}/{} drapeau {} acteur {} compétence {}/{} type {}              fin {} valeur {}",
+            l(&COUPS_RENDUS), l(&FIN_NORMALE), l(&ARRET_EN_CHAINE),
+            l(&CIBLE_IMPLAUSIBLE), l(&SWITCH_ABSENT), l(&SWITCH_HORS_PLAGE),
+            l(&DRAPEAU_ABSENT), l(&ACTEUR_IMPLAUSIBLE),
+            l(&COMPETENCE_TRONQUEE), l(&COMPETENCE_HORS_PLAGE),
+            l(&TYPE_ABSENT), l(&FIN_PREMATUREE), l(&VALEUR_ABSENTE)
+        )
+    }
+}
+
 pub struct StreamProcessor {
     data_storage: Arc<DataStorage>,
     skill_lookup: Arc<SkillLookup>,
@@ -1690,6 +1736,7 @@ impl StreamProcessor {
     }
 
     fn parsing_damage_inner(&mut self, packet: &[u8], allow_embedded_scan: bool, require_trusted: bool) -> bool {
+        use diag_arrets as DA; use std::sync::atomic::Ordering::Relaxed;
         let length_info = read_varint(packet, 0);
         if length_info.length < 0 {
             return false;
@@ -1723,6 +1770,7 @@ impl StreamProcessor {
             }
 
             if parsed_any && !is_chained {
+                DA::FIN_NORMALE.fetch_add(1, Relaxed);
                 break;
             }
 
@@ -1734,31 +1782,51 @@ impl StreamProcessor {
             // keeps doing its job.
             let target_value = match try_read_varint(packet, &mut offset) {
                 Some(v) if self.data_storage.is_plausible_entity_id(v) => v,
-                _ => { break; }
+                _ => {
+                    DA::CIBLE_IMPLAUSIBLE.fetch_add(1, Relaxed);
+                    if parsed_any { DA::ARRET_EN_CHAINE.fetch_add(1, Relaxed); }
+                    break;
+                }
             };
 
             // Switch value
             let switch_value = match try_read_varint(packet, &mut offset) {
                 Some(v) => v,
-                None => break,
+                None => {
+                    DA::SWITCH_ABSENT.fetch_add(1, Relaxed);
+                    if parsed_any { DA::ARRET_EN_CHAINE.fetch_add(1, Relaxed); }
+                    break;
+                }
             };
             let and_result = switch_value & mask;
 
             if !(4..=7).contains(&and_result) {
+                DA::SWITCH_HORS_PLAGE.fetch_add(1, Relaxed);
+                if parsed_any { DA::ARRET_EN_CHAINE.fetch_add(1, Relaxed); }
                 break;
             }
 
             // Unused flag
-            if try_read_varint(packet, &mut offset).is_none() { break; }
+            if try_read_varint(packet, &mut offset).is_none() {
+                DA::DRAPEAU_ABSENT.fetch_add(1, Relaxed);
+                if parsed_any { DA::ARRET_EN_CHAINE.fetch_add(1, Relaxed); }
+                break;
+            }
 
             // Actor (same gate as the target above).
             let actor_value = match try_read_varint(packet, &mut offset) {
                 Some(v) if self.data_storage.is_plausible_entity_id(v) => v,
-                _ => { break; }
+                _ => {
+                    DA::ACTEUR_IMPLAUSIBLE.fetch_add(1, Relaxed);
+                    if parsed_any { DA::ARRET_EN_CHAINE.fetch_add(1, Relaxed); }
+                    break;
+                }
             };
 
             // Exact 4-byte skill ID
             if offset + 4 > packet.len() {
+                DA::COMPETENCE_TRONQUEE.fetch_add(1, Relaxed);
+                if parsed_any { DA::ARRET_EN_CHAINE.fetch_add(1, Relaxed); }
                 break;
             }
             let mut exact_skill_code = i64::from(packet[offset] as u32)
@@ -1773,6 +1841,8 @@ impl StreamProcessor {
             }
 
             if !(1..=299_999_999).contains(&exact_skill_code) {
+                DA::COMPETENCE_HORS_PLAGE.fetch_add(1, Relaxed);
+                if parsed_any { DA::ARRET_EN_CHAINE.fetch_add(1, Relaxed); }
                 break;
             }
 
@@ -1799,7 +1869,11 @@ impl StreamProcessor {
 
             let dummy_type = match try_read_varint(packet, &mut offset) {
                 Some(v) => v,
-                None => break,
+                None => {
+                    DA::TYPE_ABSENT.fetch_add(1, Relaxed);
+                    if parsed_any { DA::ARRET_EN_CHAINE.fetch_add(1, Relaxed); }
+                    break;
+                }
             };
             let damage_type = dummy_type as u8;
 
@@ -1842,13 +1916,19 @@ impl StreamProcessor {
 
             offset += temp_v;
             if offset >= packet.len() {
+                DA::FIN_PREMATUREE.fetch_add(1, Relaxed);
+                if parsed_any { DA::ARRET_EN_CHAINE.fetch_add(1, Relaxed); }
                 break;
             }
 
             // Struct data extraction
             let mut first_value = match try_read_varint(packet, &mut offset) {
                 Some(v) => v,
-                None => break,
+                None => {
+                    DA::VALEUR_ABSENTE.fetch_add(1, Relaxed);
+                    if parsed_any { DA::ARRET_EN_CHAINE.fetch_add(1, Relaxed); }
+                    break;
+                }
             };
             let mut after_first_offset = offset;
             let mut second_value = match try_read_varint(packet, &mut offset) {
@@ -2064,6 +2144,7 @@ impl StreamProcessor {
                 pdp.set_damage(final_damage);
                 pdp.set_hex_payload(to_hex(packet));
 
+                DA::COUPS_RENDUS.fetch_add(1, Relaxed);
                 self.data_storage.append_damage(pdp);
             } else if final_damage > 1 && self.data_storage.is_known_player(actor_value) {
                 // Self-cast `04 38` record from a known player: an instant SELF-HEAL
