@@ -97,7 +97,9 @@
       "selfHealing": "Auto-soin",
       "multiHitDamage": "Dégâts des coups multiples",
       "multiHitHits": "Coups multiples",
-      "maxHp": "PV max."
+      "maxHp": "PV max.",
+      "damageReceived": "Dégâts subis",
+      "hitsReceived": "Coups reçus"
     },
     "titleFor": "pour",
     "titleVs": "contre",

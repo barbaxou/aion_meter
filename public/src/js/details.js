@@ -158,6 +158,20 @@ const createDetailsUI = ({
     { key: "details.stats.parryRate", fallback: "Parry Rate", getValue: (d) => pctText(d?.totalParryPct) },
     { key: "details.stats.powershardRate", fallback: "P.Shard Rate", getValue: (d) => pctText(d?.totalPowershardPct) },
     { key: "details.stats.regen", fallback: "Regen", getValue: (d) => formatDamageCompact(d?.totalRegen) },
+    // Ajout XIII NRV : les dégâts subis. Le stockage les tenait déjà et la
+    // fenêtre les recevait déjà — il ne manquait que de les montrer. Ils
+    // n'étaient lus par personne jusqu'au 05/10/2026 : un garde-fou du parseur
+    // jetait les coups de monstre avant qu'ils n'arrivent au compteur.
+    {
+      key: "details.stats.damageReceived",
+      fallback: "Damage Taken",
+      getValue: (d) => formatDamageCompact(d?.totalDamageReceived),
+    },
+    {
+      key: "details.stats.hitsReceived",
+      fallback: "Hits Taken",
+      getValue: (d) => formatCount(d?.totalHitsReceived),
+    },
   ];
 
   // Stats shown when the DMG/HEAL toggle is on HEAL. Fewer, healing-relevant rows;
@@ -347,6 +361,8 @@ const createDetailsUI = ({
         return formatDamageCompact(data.totalPartyHeal);
       case "details.stats.damageReceived":
         return formatDamageCompact(data.totalDamageReceived);
+      case "details.stats.hitsReceived":
+        return formatCount(data.totalHitsReceived);
       case "details.stats.empty":
         return "";
       case "details.stats.combatTime":
@@ -2004,6 +2020,15 @@ const createDetailsUI = ({
         (Array.isArray(ids) ? ids : []).forEach((id) => {
           const actor = detailsActors.get(Number(id));
           if (actor) sum += Number(actor.damageReceived) || 0;
+        });
+        return sum;
+      })(),
+      totalHitsReceived: (() => {
+        let sum = 0;
+        const ids = selectedAttackerIds || [...detailsActors.keys()];
+        (Array.isArray(ids) ? ids : []).forEach((id) => {
+          const actor = detailsActors.get(Number(id));
+          if (actor) sum += Number(actor.hitsReceived) || 0;
         });
         return sum;
       })(),

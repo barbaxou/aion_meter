@@ -97,7 +97,9 @@
       "selfHealing": "Self-Healing",
       "multiHitDamage": "Multi-Hit Damage",
       "multiHitHits": "Multi-Hits",
-      "maxHp": "Max HP"
+      "maxHp": "Max HP",
+      "damageReceived": "Damage Taken",
+      "hitsReceived": "Hits Taken"
     },
     "titleFor": "for",
     "titleVs": "vs",
