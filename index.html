@@ -376,13 +376,17 @@
           <div class="settingsHeader">
             <img class="xiiinrvLogo" src="/src/assets/logo.png" alt="" />
             <div class="settingsTitle" data-i18n="settings.title">Settings</div>
-            <button
+            <!-- Ajout XIII NRV : le numéro de version était un bouton qui
+                 ouvrait la page des versions d'A2Tools sur GitHub. Un membre qui
+                 clique dessus pour vérifier sa version se retrouvait sur le dépôt
+                 d'un autre programme, avec d'autres installeurs. C'est un texte,
+                 plus un lien. -->
+            <span
               class="settingsFooterValue settingsVersionLink"
-              type="button"
               data-i18n-aria-label="settings.version"
               aria-label="Version">
               <span class="settingsVersionValue">-</span>
-            </button>
+            </span>
             <button class="closeX settingsClose" type="button" aria-label="Close">×</button>
           </div>
           <div class="settingsBody">

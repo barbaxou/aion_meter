@@ -2021,7 +2021,6 @@ class DpsApp {
     this.kofiWidget = document.querySelector(".kofiWidget");
     this.quitButton = document.querySelector(".quitButton");
     this.settingsVersionValue = document.querySelector(".settingsVersionValue");
-    this.settingsVersionLink = document.querySelector(".settingsVersionLink");
     this.languageDropdownBtn = document.querySelector(".languageDropdownBtn");
     this.languageDropdownMenu = document.querySelector(".languageDropdownMenu");
     this.themeDropdownBtn = document.querySelector(".themeDropdownBtn");
@@ -2481,10 +2480,6 @@ class DpsApp {
 
     this.kofiButton?.addEventListener("click", () => {
       window.javaBridge?.openBrowser?.("https://ko-fi.com/W7W51T1YW9");
-    });
-
-    this.settingsVersionLink?.addEventListener("click", () => {
-      window.javaBridge?.openBrowser?.("https://github.com/taengu/AION2-DPS-Meter/releases");
     });
 
     this.quitButton?.addEventListener("click", () => {
