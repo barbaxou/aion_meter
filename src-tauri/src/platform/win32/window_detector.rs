@@ -65,22 +65,58 @@ fn top_level_windows() -> Vec<HWND> {
     windows
 }
 
+/// La fenêtre décrite est-elle celle du jeu, et sous quel libellé la nommer ?
+///
+/// Décision isolée dans une fonction pure : c'est elle qui décide si le meter
+/// lit ou jette les paquets, et elle ne doit pas rester invérifiable derrière
+/// Win32. Le libellé rendu ne sert qu'au journal — l'appelant ne regarde que
+/// `is_some()`.
+fn reconnait(titre: &str, exe: Option<&str>) -> Option<String> {
+    match exe {
+        // Le programme est lisible : c'est lui qui tranche, quel que soit le
+        // titre. Un titre vide n'est **pas** un motif de rejet — le jeu vide le
+        // sien pendant les chargements et les téléports, et le refuser là
+        // coûtait au meter son verrou de port et son réassemblage, donc la
+        // capture, pour une à deux minutes à chaque fois.
+        Some(p) if is_game_exe(p) => Some(if titre.is_empty() {
+            // Un libellé parlant pour le journal, puisqu'il n'y a pas de titre.
+            format!("(sans titre) {}", p.rsplit(['\\', '/']).next().unwrap_or(p))
+        } else {
+            titre.to_string()
+        }),
+
+        // Un autre programme, **même si son titre commence par « AION2 »**.
+        //
+        // Le 06/10/2026, le meter a annoncé « AION2 window found: "AION2 DPS
+        // Meter" » : la fenêtre de Kuroukihime, pas le jeu. La reconnaissance
+        // se faisait d'abord par `title.starts_with("AION2")`, sur la première
+        // fenêtre venue, et trois fenêtres du poste commençaient ainsi — celle
+        // du jeu, celle de ce meter et sa vue web. Conséquence : `is_aion_running`
+        // restait vrai alors que le jeu était fermé, donc la remise à zéro du
+        // détecteur de port et des réassembleurs ne se déclenchait jamais, et
+        // l'état périmé passait dans la connexion suivante.
+        Some(_) => None,
+
+        // Programme illisible — le titre est alors tout ce qu'on a. Cela
+        // n'arrive pas pour les processus du joueur lui-même, mais mieux vaut
+        // un repli que l'aveuglement.
+        None => is_game_title(titre).then(|| titre.to_string()),
+    }
+}
+
 /// Find the AION 2 game window and return its title, or None if not found.
 pub fn find_aion2_window_title() -> Option<String> {
-    let windows = top_level_windows();
-    if let Some(title) = windows.iter().map(|&h| window_title(h)).find(|t| is_game_title(t)) {
-        return Some(title);
-    }
-    // Titled some other way: look at who owns each visible, titled window.
-    windows.into_iter().find_map(|h| {
+    // Un seul passage, et c'est `reconnait` qui décide à chaque fenêtre.
+    //
+    // Il y avait auparavant un premier balayage par titre seul, qui retenait la
+    // première fenêtre dont le titre commençait par « AION2 ». Il désignait la
+    // fenêtre d'un autre meter aussi volontiers que celle du jeu — constaté le
+    // 06/10/2026 — et il court-circuitait le contrôle du programme.
+    top_level_windows().into_iter().find_map(|h| {
         if !unsafe { IsWindowVisible(h) }.as_bool() {
             return None;
         }
-        let title = window_title(h);
-        if title.is_empty() {
-            return None;
-        }
-        exe_path(h).filter(|p| is_game_exe(p)).map(|_| title)
+        reconnait(&window_title(h), exe_path(h).as_deref())
     })
 }
 
@@ -131,5 +167,92 @@ mod tests {
         assert!(is_game_exe(r"C:\Games\aion2.EXE"));
         assert!(!is_game_exe(r"C:\Games\AION2Launcher.exe"));
         assert!(!is_game_exe(""));
+    }
+
+    /// Une fenêtre du jeu au titre vide doit être reconnue à son programme.
+    ///
+    /// Le 06/10/2026, le journal de barbaxou montrait le meter aveugle 2 min 22 s
+    /// — « No AION2 window found », verrou de port perdu, réassembleurs vidés —
+    /// avec, en face, la fenêtre rejetée nommée dans son propre relevé :
+    /// `title="" exe="AION2.exe"`. C'était bien le jeu. La branche de secours,
+    /// censée reconnaître « une fenêtre appartenant à AION2.exe », ressortait
+    /// avant d'avoir regardé le programme, au seul motif que le titre était
+    /// vide — ce que le jeu fait pendant les chargements et les téléports.
+    ///
+    /// Ce `return None` n'existait que pour avoir une chaîne non vide à
+    /// journaliser. Une commodité de type de retour, payée par la perte de la
+    /// capture.
+    #[test]
+    fn une_fenetre_du_jeu_sans_titre_est_reconnue() {
+        let jeu = Some(r"D:\1-Jeux\AION2_TW\Aion2\Binaries\Win64\AION2.exe");
+
+        // Par le titre : le cas ordinaire, qui doit continuer de marcher.
+        assert!(reconnait("AION2  ", None).is_some(), "témoin : reconnaissance par le titre");
+
+        // Par le programme, titre vide : le cas du 06/10/2026.
+        assert!(
+            reconnait("", jeu).is_some(),
+            "une fenêtre d'AION2.exe au titre vide est le jeu pendant un chargement ;              la rejeter fait perdre le verrou de port et le réassemblage"
+        );
+
+        // Et ce qui ne doit pas être pris pour le jeu.
+        assert!(reconnait("", Some(r"C:\Windows\explorer.exe")).is_none(), "autre programme, titre vide");
+        assert!(reconnait("Discord", Some(r"C:\Discord\Discord.exe")).is_none(), "autre programme");
+        assert!(reconnait("", None).is_none(), "rien du tout");
+    }
+
+    /// La fenêtre d'un autre meter ne doit pas être prise pour le jeu.
+    ///
+    /// Le 06/10/2026, le journal annonçait `AION2 window found: "AION2 DPS
+    /// Meter"` — la fenêtre de Kuroukihime. Trois fenêtres visibles du poste
+    /// commençaient par « AION2 » :
+    ///
+    /// ```text
+    /// AION2 DPS Meter   AionDpsMeter.UI    (un autre meter)
+    /// AION2             AION2              (le jeu)
+    /// AION2 DPS Meter   msedgewebview2     (sa vue web)
+    /// ```
+    ///
+    /// La reconnaissance se faisait par `title.starts_with("AION2")` sur la
+    /// première venue. Elle désignait donc un autre meter, et `is_aion_running`
+    /// restait vrai alors que le jeu était fermé : la remise à zéro du détecteur
+    /// de port et des réassembleurs ne se déclenchait plus, et l'état périmé
+    /// passait dans la connexion suivante.
+    #[test]
+    fn un_autre_meter_nest_pas_le_jeu() {
+        let kurou = Some(r"D:\9 - meters aion\kuroukihime\AionDpsMeter.UI.exe");
+        let webview = Some(r"C:\Program Files\Microsoft\EdgeWebView\msedgewebview2.exe");
+        let jeu = Some(r"D:\1-Jeux\AION2_TW\Aion2\Binaries\Win64\AION2.exe");
+
+        assert!(
+            reconnait("AION2 DPS Meter", kurou).is_none(),
+            "la fenêtre d'un autre meter commence par « AION2 » sans être le jeu"
+        );
+        assert!(
+            reconnait("AION2 DPS Meter", webview).is_none(),
+            "sa vue web non plus"
+        );
+
+        // Témoins : le jeu doit continuer d'être reconnu, par le programme.
+        assert_eq!(
+            reconnait("AION2", jeu).as_deref(),
+            Some("AION2"),
+            "témoin : le vrai jeu, titré"
+        );
+        assert!(
+            reconnait("", jeu).is_some(),
+            "témoin : le vrai jeu, titre vidé pendant un chargement"
+        );
+
+        // Et le repli quand le programme est illisible : le titre décide seul.
+        assert_eq!(
+            reconnait("AION2", None).as_deref(),
+            Some("AION2"),
+            "programme illisible : mieux vaut le titre que l'aveuglement"
+        );
+        assert!(
+            reconnait("Discord", None).is_none(),
+            "programme illisible et titre quelconque"
+        );
     }
 }
