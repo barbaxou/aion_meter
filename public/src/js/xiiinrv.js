@@ -49,10 +49,19 @@
         if (e.pieces) details.push(`${e.pieces} pièces d'équipement`);
         if (e.pets) details.push(`${e.pets} familles de pets`);
         if (details.length) lignes.push(details.join(" · "));
+        // Le nom, le niveau, l'Item Level, le serveur, l'équipement et le Combat
+        // Power arrivent à l'entrée en jeu — la fiche y est imbriquée dans un
+        // plus gros paquet, et `observer()` va la chercher dedans. Seuls les
+        // pets, les PV et les PM attendent l'écran Genus Insight : le jeu ne les
+        // envoie qu'à ce moment-là. Mesuré le 05/10/2026 sur l'entrée en jeu du
+        // 29/09, sans ouvrir cet écran — tout était lu sauf ces trois-là.
         if (!e.niveau) {
           lignes.push(t("noSheet",
-            "Niveau, Item Level, PV et PM manquants : ouvrez Pets › Genus Insight en jeu, "
-            + "c'est ce qui déclenche l'envoi de la fiche."));
+            "La fiche n'a pas encore été lue : entrez en jeu avec ce personnage."));
+        } else if (!e.pets) {
+          lignes.push(t("noPets",
+            "Pets, PV et PM manquants : ouvrez Pets › Genus Insight en jeu. "
+            + "Le reste de la fiche est déjà lu."));
         }
         lignes.push(e.jeton_present
           ? `${t("lastSend", "Dernier envoi")} : ${depuis(e.dernier_envoi)}`
