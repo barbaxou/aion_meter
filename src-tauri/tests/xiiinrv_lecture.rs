@@ -797,3 +797,87 @@ fn changer_de_personnage_fait_relire_la_fiche_imbriquee() {
     // `ne_lit_rien_sans_jeton`, qui vérifie qu'aucun nom n'est lu.
     collecte::nom_detecte(None);
 }
+
+/// Un paquet de Combat Power isolé, mais structurellement corroboré, compte.
+///
+/// `lire_combat_power` exigeait **deux** paquets dans la même fenêtre de cinq
+/// secondes. Cette prudence avait sa raison : le 30/09/2026, un paquet isolé
+/// parfaitement conforme — neuf octets nuls compris — annonçait 3 732 pour un
+/// personnage qui en affiche 132 000, et l'accepter l'aurait publié sur le site.
+///
+/// Mais elle échoue quand un seul paquet passe, ce qui est arrivé le
+/// 06/10/2026 : un unique `56 36` à 81 451, écarté, et un Combat Power resté
+/// vide sur le site de barbaxou alors que la valeur avait bien été lue.
+///
+/// La mesure a montré que le paquet porte **deux** entiers de 64 bits
+/// consécutifs, et non un seul :
+///
+/// ```text
+/// 16 56 36 <champ 1 u32> 00*4 <champ 2 u32> 00*4
+/// ```
+///
+/// Relevés réels :
+///
+/// ```text
+/// 20/09  77148 / 132780      le compteur défile, le champ 2 ne bouge pas
+/// 20/09  111394 / 132780
+/// 20/09  132462 / 132780     132 462 est la valeur vraie
+/// 06/10  81451 / 81451       paquet isolé, déjà stabilisé
+/// ```
+///
+/// D'où un **second avis structurel**, instantané, comme celui de Kuroukihime :
+/// les deux champs dans 10 000..2 000 000 et le premier ≤ le second. Le faux
+/// paquet du 30/09 annonçait 3 732, donc **sous la borne** : il reste rejeté.
+/// La corroboration temporelle est conservée pour les valeurs hors fourchette —
+/// un personnage débutant sous 10 000 passe encore par elle.
+#[test]
+fn un_combat_power_isole_mais_corrobore_est_retenu() {
+    let _garde = VERROU.lock().unwrap_or_else(|e| e.into_inner());
+
+    /// `16 56 36 <a u32> 00*4 <b u32> 00*4`
+    fn paquet(a: u32, b: u32) -> Vec<u8> {
+        let mut p = vec![0x16, 0x56, 0x36];
+        p.extend_from_slice(&a.to_le_bytes());
+        p.extend_from_slice(&[0; 4]);
+        p.extend_from_slice(&b.to_le_bytes());
+        p.extend_from_slice(&[0; 4]);
+        assert_eq!(p.len(), 19);
+        p
+    }
+
+    // Le cas du 06/10 : un seul paquet, les deux champs d'accord.
+    collecte::vider();
+    collecte::ouvrir_lecture(true);
+    collecte::observer(&paquet(81_451, 81_451));
+    assert_eq!(
+        collecte::lire_etat().combat_power,
+        Some(81_451),
+        "un paquet isolé dont les deux champs se corroborent doit compter ; \
+         l'écarter laissait le Combat Power vide sur le site"
+    );
+
+    // Témoin : le faux paquet du 30/09 reste rejeté, isolé et sous la borne.
+    collecte::vider();
+    collecte::observer(&paquet(3_732, 3_732));
+    assert_eq!(
+        collecte::lire_etat().combat_power,
+        None,
+        "témoin : 3 732 est sous la borne des 10 000 — c'est le faux du 30/09, \
+         il ne doit pas passer, sinon la correction est pire que le défaut"
+    );
+
+    // Témoin : le défilement du 20/09 rend toujours sa valeur finale.
+    collecte::vider();
+    for a in [77_148u32, 111_394, 132_462] {
+        collecte::observer(&paquet(a, 132_780));
+    }
+    assert_eq!(
+        collecte::lire_etat().combat_power,
+        Some(132_462),
+        "témoin : le défilement doit rendre sa dernière marche, pas la première"
+    );
+
+    collecte::ouvrir_lecture(false);
+    collecte::vider();
+    collecte::nom_detecte(None);
+}

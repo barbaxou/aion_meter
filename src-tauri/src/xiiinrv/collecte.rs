@@ -638,6 +638,34 @@ fn lire_combat_power(packet: &[u8]) {
         return;
     }
 
+    // Second avis **structurel**, en plus du second avis temporel plus bas.
+    //
+    // Le paquet porte deux entiers de 64 bits consécutifs, pas un seul — le
+    // champ lu ci-dessus, puis un second au même format. Relevés réels :
+    //
+    //     20/09   77148 / 132780     le compteur défile, le champ 2 ne bouge pas
+    //     20/09  111394 / 132780
+    //     20/09  132462 / 132780     132 462 est la valeur vraie
+    //     06/10   81451 /  81451     paquet isolé, déjà stabilisé
+    //
+    // Quand les deux champs tiennent dans une fourchette plausible et que le
+    // premier ne dépasse pas le second, le paquet se corrobore lui-même : pas
+    // besoin d'en attendre un deuxième. C'est la méthode de Kuroukihime, et
+    // elle règle le cas du 06/10/2026, où un unique `56 36` à 81 451 était
+    // écarté et laissait le Combat Power vide sur le site.
+    //
+    // Elle ne rouvre pas la porte au défaut qui avait justifié la prudence : le
+    // faux paquet du 30/09, parfaitement conforme par ailleurs, annonçait 3 732
+    // — **sous la borne basse**, donc toujours rejeté.
+    //
+    // La voie temporelle est conservée pour tout ce qui sort de la fourchette,
+    // par exemple un personnage débutant sous 10 000.
+    const BORNES: std::ops::RangeInclusive<u32> = 10_000..=2_000_000;
+    let corrobore_par_structure = u32_le(packet, 11)
+        .is_some_and(|second| {
+            BORNES.contains(&valeur) && BORNES.contains(&second) && valeur <= second
+        });
+
     let maintenant = std::time::Instant::now();
     let mut e = etat().lock();
     let meme_defilement = e
@@ -666,7 +694,7 @@ fn lire_combat_power(packet: &[u8]) {
     //
     // On attend donc une corroboration : deux paquets au moins dans la même
     // fenêtre. Mieux vaut un Combat Power un peu ancien qu'un Combat Power faux.
-    if e.cp_paquets >= 2 {
+    if e.cp_paquets >= 2 || corrobore_par_structure {
         if let Some(retenue) = e.cp_en_attente {
             e.combat_power = Some(retenue);
         }
