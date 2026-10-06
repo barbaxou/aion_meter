@@ -6,7 +6,7 @@
 //! PM 5 678 — tous identiques à ce que le jeu affiche.
 
 use parking_lot::Mutex;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 use tracing::info;
@@ -24,7 +24,7 @@ const CONTENEUR_EQUIPE: u8 = 0x0B;
 /// en jeu différentes.
 const MEME_ENTREE_EN_JEU: std::time::Duration = std::time::Duration::from_secs(60);
 
-#[derive(Clone, Debug, Serialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Piece {
     pub emplacement: u8,
     #[serde(rename = "itemId")]
@@ -33,7 +33,7 @@ pub struct Piece {
     pub conteneur: u8,
 }
 
-#[derive(Clone, Debug, Serialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Effet {
     pub slot: u8,
     pub rarete: u8,
@@ -795,4 +795,145 @@ fn trouver_entete_genus(packet: &[u8], id: u8) -> Option<usize> {
         o += 1;
     }
     None
+}
+
+// ---------------------------------------------------------------------------
+// Persistance de la fiche
+// ---------------------------------------------------------------------------
+
+/// Où la fiche est conservée entre deux lancements. Réglé une fois au démarrage.
+static FICHIER: OnceLock<std::path::PathBuf> = OnceLock::new();
+
+/// La fiche telle qu'elle est écrite sur le disque.
+///
+/// Volontairement distincte de [`Etat`] : les horodatages (`cp_vu_le`,
+/// `equipement_vu_le`, `pets_vu_le`) et le décompte du défilement **ne sont pas
+/// conservés**, et ce n'est pas un oubli. Ce sont des `Instant`, qui n'ont de
+/// sens que dans le processus qui les a pris, et surtout ils servent à dire
+/// « cela vient de la même entrée en jeu ». Rien de ce qui est relu d'une
+/// session précédente n'en fait partie : au prochain changement de personnage,
+/// l'équipement et les pets relus seront donc jetés, ce qui est le bon
+/// comportement.
+#[derive(Serialize, Deserialize, Default)]
+struct FicheEnregistree {
+    nom: Option<String>,
+    serveur: Option<String>,
+    niveau: Option<u32>,
+    item_level: Option<u32>,
+    pv: Option<u32>,
+    pm: Option<u32>,
+    combat_power: Option<u32>,
+    #[serde(default)]
+    equipement: Vec<Piece>,
+    #[serde(default)]
+    pets: Vec<GenusEnregistre>,
+}
+
+/// Un genus sur le disque. [`Genus`] porte un `&'static str`, qui s'écrit mais
+/// ne se relit pas : le nom est donc stocké en clair et retrouvé dans la table
+/// [`GENUS`] à la relecture. Un nom inconnu est ignoré plutôt que deviné.
+#[derive(Serialize, Deserialize)]
+struct GenusEnregistre {
+    genus: String,
+    niveau: u32,
+    xp: u32,
+    effets: Vec<Effet>,
+}
+
+/// Dit où conserver la fiche. À appeler une fois, au démarrage.
+pub fn fichier_de_sauvegarde(chemin: std::path::PathBuf) {
+    let _ = FICHIER.set(chemin);
+}
+
+/// Relit la fiche de la session précédente.
+///
+/// **C'est la raison d'être de tout ceci.** Le jeu n'envoie la fiche complète,
+/// l'équipement, le Combat Power et les pets qu'**une fois par connexion du
+/// client**. Jusqu'ici l'état ne vivait qu'en mémoire : chaque redémarrage du
+/// meter l'effaçait, et le jeu ne le renvoyait pas. Dans la nuit du 06/10/2026,
+/// six redémarrages ont ainsi effacé six fois ce qui avait été lu, et barbaxou
+/// a passé la soirée à rouvrir des écrans qui ne redemandaient rien.
+///
+/// Ne fait rien si le partage est fermé : sans lecture, il n'y a pas de fiche à
+/// tenir.
+pub fn charger() {
+    if !lecture_ouverte() {
+        return;
+    }
+    let Some(chemin) = FICHIER.get() else { return };
+    let Ok(texte) = std::fs::read_to_string(chemin) else { return };
+    let Ok(f) = serde_json::from_str::<FicheEnregistree>(&texte) else {
+        info!("XIII NRV : fiche enregistrée illisible, on repart de zéro");
+        return;
+    };
+
+    let pets: Vec<Genus> = f
+        .pets
+        .into_iter()
+        .filter_map(|g| {
+            GENUS
+                .iter()
+                .find(|(_, nom)| *nom == g.genus)
+                .map(|(_, nom)| Genus {
+                    genus: nom,
+                    niveau: g.niveau,
+                    xp: g.xp,
+                    effets: g.effets,
+                })
+        })
+        .collect();
+
+    let mut e = etat().lock();
+    e.nom = f.nom;
+    e.serveur = f.serveur;
+    e.niveau = f.niveau;
+    e.item_level = f.item_level;
+    e.pv = f.pv;
+    e.pm = f.pm;
+    e.combat_power = f.combat_power;
+    e.equipement = f.equipement;
+    e.pets = pets;
+    info!(
+        "XIII NRV : fiche relue du disque — {} — {} pièces, {} pets",
+        e.nom.as_deref().unwrap_or("(pas de nom)"),
+        e.equipement.len(),
+        e.pets.len()
+    );
+}
+
+/// Écrit la fiche courante. Appelée quand son résumé change.
+///
+/// Écriture dans un fichier temporaire puis renommage : une coupure de courant
+/// au mauvais moment laisserait sinon un fichier tronqué, et le membre
+/// perdrait justement ce qu'on cherche à préserver.
+pub fn enregistrer() {
+    let Some(chemin) = FICHIER.get() else { return };
+    let f = {
+        let e = etat().lock();
+        FicheEnregistree {
+            nom: e.nom.clone(),
+            serveur: e.serveur.clone(),
+            niveau: e.niveau,
+            item_level: e.item_level,
+            pv: e.pv,
+            pm: e.pm,
+            combat_power: e.combat_power,
+            equipement: e.equipement.clone(),
+            pets: e
+                .pets
+                .iter()
+                .map(|g| GenusEnregistre {
+                    genus: g.genus.to_string(),
+                    niveau: g.niveau,
+                    xp: g.xp,
+                    effets: g.effets.clone(),
+                })
+                .collect(),
+        }
+    };
+    let Ok(texte) = serde_json::to_string_pretty(&f) else { return };
+    let provisoire = chemin.with_extension("tmp");
+    if std::fs::write(&provisoire, texte).is_ok() {
+        let _ = std::fs::rename(&provisoire, chemin);
+    }
 }

@@ -2060,6 +2060,16 @@ pub fn run() {
                     etat.settings.get(crate::xiiinrv::CLE_URL),
                     etat.settings.get(crate::xiiinrv::CLE_ACTIF).as_deref() == Some("true"),
                 );
+                // Et relire la fiche de la session précédente. Le jeu n'envoie
+                // la fiche complète, l'équipement, le Combat Power et les pets
+                // qu'une fois par connexion du client : sans cela, redémarrer
+                // le meter efface ce qui avait été lu, et rien ne le renvoie.
+                // **Après** `demarrer`, qui établit l'état du partage dont
+                // dépend la relecture.
+                crate::xiiinrv::collecte::fichier_de_sauvegarde(
+                    etat.app_data_dir.join("fiche.json"),
+                );
+                crate::xiiinrv::collecte::charger();
             }
 
             // Le nom détecté par A2Tools sert de filet quand la fiche de
@@ -2088,6 +2098,12 @@ pub fn run() {
                     let resume = crate::xiiinrv::envoi::resume_pour_journal();
                     if resume != dernier || depuis.elapsed().as_secs() >= 60 {
                         tracing::info!("XIII NRV : {}", resume);
+                        // La fiche a changé : la conserver. Le résumé sert de
+                        // détecteur de changement, et il couvre exactement ce
+                        // qu'on enregistre.
+                        if resume != dernier {
+                            crate::xiiinrv::collecte::enregistrer();
+                        }
                         dernier = resume;
                         depuis = std::time::Instant::now();
                     }

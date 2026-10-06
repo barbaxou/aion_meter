@@ -881,3 +881,82 @@ fn un_combat_power_isole_mais_corrobore_est_retenu() {
     collecte::vider();
     collecte::nom_detecte(None);
 }
+
+/// La fiche survit à un redémarrage du meter.
+///
+/// Le jeu n'envoie la fiche complète, l'équipement, le Combat Power et les pets
+/// qu'**une fois par connexion du client**. Jusqu'ici l'état ne vivait qu'en
+/// mémoire : chaque redémarrage du meter l'effaçait, et rien ne le renvoyait.
+///
+/// Dans la nuit du 06/10/2026, six redémarrages ont effacé six fois ce qui
+/// avait été lu. barbaxou a ouvert l'écran Pets trois fois sans rien obtenir —
+/// non parce que l'écran ne marchait pas, mais parce que le jeu avait déjà tout
+/// envoyé et ne le redisait pas. C'est la cause de la plupart des « pertes de
+/// reconnaissance » signalées pendant des jours.
+#[test]
+fn la_fiche_survit_a_un_redemarrage() {
+    let _garde = VERROU.lock().unwrap_or_else(|e| e.into_inner());
+
+    let dossier = std::env::temp_dir().join(format!(
+        "xiiinrv-fiche-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    std::fs::create_dir_all(&dossier).expect("dossier de test");
+    collecte::fichier_de_sauvegarde(dossier.join("fiche.json"));
+
+    collecte::vider();
+    collecte::ouvrir_lecture(true);
+
+    // Une fiche comme le meter en tient une : nom, chiffres, équipement.
+    {
+        let paquet_cp: &[u8] = &[
+            0x16, 0x56, 0x36, 0x2b, 0x3e, 0x01, 0, 0, 0, 0, 0, 0x2b, 0x3e, 0x01, 0, 0, 0, 0, 0,
+        ];
+        collecte::observer(paquet_cp);
+    }
+    assert_eq!(
+        collecte::lire_etat().combat_power,
+        Some(81_451),
+        "témoin : la fiche doit d'abord contenir quelque chose, sinon le test ne prouve rien"
+    );
+
+    collecte::enregistrer();
+
+    // Le meter redémarre : la mémoire est vide, le disque ne l'est pas.
+    collecte::vider();
+    assert_eq!(
+        collecte::lire_etat().combat_power,
+        None,
+        "témoin : après `vider`, la mémoire doit bien être vide"
+    );
+
+    collecte::charger();
+    assert_eq!(
+        collecte::lire_etat().combat_power,
+        Some(81_451),
+        "la fiche doit être relue du disque ; sans cela le membre perd tout à \
+         chaque redémarrage et le jeu ne renvoie rien"
+    );
+
+    // Et les horodatages, eux, ne doivent **pas** revenir : ce qui vient d'une
+    // session précédente n'appartient pas à l'entrée en jeu courante. Sans
+    // cela, un changement de personnage garderait l'équipement du précédent.
+    let mut e = collecte::lire_etat();
+    assert!(
+        e.cp_vu_le.is_none(),
+        "un horodatage relu ferait passer une fiche ancienne pour la session courante"
+    );
+    e.changer_de_personnage(std::time::Instant::now());
+    assert_eq!(
+        e.combat_power, None,
+        "au changement de personnage, ce qui vient d'une session précédente se jette"
+    );
+
+    collecte::ouvrir_lecture(false);
+    collecte::vider();
+    collecte::nom_detecte(None);
+    let _ = std::fs::remove_dir_all(&dossier);
+}
