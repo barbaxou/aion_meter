@@ -95,6 +95,14 @@ fn que_lit_la_fiche_dans_cette_capture() {
     println!("  équipement    : {} pièces", e.equipement.len());
     println!("  pets          : {} familles", e.pets.len());
 
+    if !e.equipement.is_empty() {
+        println!("
+  pièces trouvées (emplacement, identifiant, enchantement) :");
+        for p in &e.equipement {
+            println!("    emplacement {:>3}  id {:>10}  +{}", p.emplacement, p.item_id, p.enchantement);
+        }
+    }
+
     collecte::ouvrir_lecture(false);
     collecte::vider();
     collecte::nom_detecte(None);
