@@ -148,8 +148,13 @@ static LECTURE_OUVERTE: AtomicBool = AtomicBool::new(false);
 pub fn ouvrir_lecture(ouverte: bool) {
     let avant = LECTURE_OUVERTE.swap(ouverte, Ordering::Relaxed);
     if avant && !ouverte {
-        // On vient de refermer : on n'a aucune raison de garder la fiche.
+        // On vient de refermer : on n'a aucune raison de garder la fiche, ni en
+        // mémoire ni sur le disque. C'est le **seul** effacement du fichier, et
+        // il demande un geste du membre — tout le reste ne fait qu'ajouter.
         vider();
+        if let Some(chemin) = fichier().lock().clone() {
+            let _ = std::fs::remove_file(chemin);
+        }
     }
 }
 
@@ -801,8 +806,17 @@ fn trouver_entete_genus(packet: &[u8], id: u8) -> Option<usize> {
 // Persistance de la fiche
 // ---------------------------------------------------------------------------
 
-/// Où la fiche est conservée entre deux lancements. Réglé une fois au démarrage.
-static FICHIER: OnceLock<std::path::PathBuf> = OnceLock::new();
+/// Où la fiche est conservée entre deux lancements. Posé au démarrage.
+///
+/// Un `Mutex` et non un `OnceLock` : c'est une configuration, pas une
+/// constante. Avec un `OnceLock`, le premier appel gagnait et les suivants
+/// étaient ignorés en silence — ce qui rendait la chose intestable dès qu'un
+/// second test voulait son propre dossier, et ne protégeait de rien.
+static FICHIER: OnceLock<Mutex<Option<std::path::PathBuf>>> = OnceLock::new();
+
+fn fichier() -> &'static Mutex<Option<std::path::PathBuf>> {
+    FICHIER.get_or_init(|| Mutex::new(None))
+}
 
 /// La fiche telle qu'elle est écrite sur le disque.
 ///
@@ -842,7 +856,7 @@ struct GenusEnregistre {
 
 /// Dit où conserver la fiche. À appeler une fois, au démarrage.
 pub fn fichier_de_sauvegarde(chemin: std::path::PathBuf) {
-    let _ = FICHIER.set(chemin);
+    *fichier().lock() = Some(chemin);
 }
 
 /// Relit la fiche de la session précédente.
@@ -860,7 +874,7 @@ pub fn charger() {
     if !lecture_ouverte() {
         return;
     }
-    let Some(chemin) = FICHIER.get() else { return };
+    let Some(chemin) = fichier().lock().clone() else { return };
     let Ok(texte) = std::fs::read_to_string(chemin) else { return };
     let Ok(f) = serde_json::from_str::<FicheEnregistree>(&texte) else {
         info!("XIII NRV : fiche enregistrée illisible, on repart de zéro");
@@ -907,7 +921,29 @@ pub fn charger() {
 /// au mauvais moment laisserait sinon un fichier tronqué, et le membre
 /// perdrait justement ce qu'on cherche à préserver.
 pub fn enregistrer() {
-    let Some(chemin) = FICHIER.get() else { return };
+    let Some(chemin) = fichier().lock().clone() else { return };
+
+    // **Ne jamais écrire une fiche vide.** Elle ne porte aucune information et
+    // ne peut donc que détruire. Le cas qui compte : le meter démarre, la
+    // relecture ne rend rien — fichier illisible, ou partage décoché à ce
+    // moment-là — et le premier enregistrement écraserait ce que le membre
+    // avait. La correction détruirait exactement ce qu'elle doit préserver.
+    //
+    // Effacer reste possible, mais seulement sur un geste explicite : décocher
+    // le partage supprime le fichier (voir `ouvrir_lecture`).
+    {
+        let e = etat().lock();
+        let vide = e.nom.is_none()
+            && e.niveau.is_none()
+            && e.item_level.is_none()
+            && e.combat_power.is_none()
+            && e.equipement.is_empty()
+            && e.pets.is_empty();
+        if vide {
+            return;
+        }
+    }
+
     let f = {
         let e = etat().lock();
         FicheEnregistree {

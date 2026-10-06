@@ -960,3 +960,62 @@ fn la_fiche_survit_a_un_redemarrage() {
     collecte::nom_detecte(None);
     let _ = std::fs::remove_dir_all(&dossier);
 }
+
+/// Une fiche vide ne doit jamais écraser une fiche enregistrée.
+///
+/// Le défaut est né de la correction elle-même, le 06/10/2026. Si la relecture
+/// ne rend rien — fichier illisible, ou partage décoché au démarrage — l'état
+/// reste vide, et le premier enregistrement écrasait ce que le membre avait.
+/// La persistance détruisait alors précisément ce qu'elle devait préserver.
+///
+/// Effacer reste possible, mais sur un geste explicite : décocher le partage
+/// supprime le fichier.
+#[test]
+fn une_fiche_vide_necrase_pas_une_fiche_enregistree() {
+    let _garde = VERROU.lock().unwrap_or_else(|e| e.into_inner());
+
+    let dossier = std::env::temp_dir().join(format!(
+        "xiiinrv-vide-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    std::fs::create_dir_all(&dossier).expect("dossier de test");
+    let fichier = dossier.join("fiche.json");
+    collecte::fichier_de_sauvegarde(fichier.clone());
+
+    // Une fiche est enregistrée.
+    collecte::vider();
+    collecte::ouvrir_lecture(true);
+    collecte::observer(&[
+        0x16, 0x56, 0x36, 0x2b, 0x3e, 0x01, 0, 0, 0, 0, 0, 0x2b, 0x3e, 0x01, 0, 0, 0, 0, 0,
+    ]);
+    collecte::enregistrer();
+    let garde = std::fs::read_to_string(&fichier).expect("témoin : la fiche doit être écrite");
+    assert!(
+        garde.contains("81451"),
+        "témoin : le fichier doit contenir la fiche, sinon le test ne prouve rien"
+    );
+
+    // Le meter redémarre et la relecture échoue : l'état reste vide.
+    collecte::vider();
+    collecte::enregistrer();
+    assert_eq!(
+        std::fs::read_to_string(&fichier).ok().as_deref(),
+        Some(garde.as_str()),
+        "une fiche vide ne doit pas remplacer celle du disque ; c'est le cas où \
+         la persistance détruirait ce qu'elle doit protéger"
+    );
+
+    // Décocher le partage, en revanche, efface : c'est un geste du membre.
+    collecte::ouvrir_lecture(false);
+    assert!(
+        !fichier.exists(),
+        "décocher le partage doit supprimer la fiche du disque"
+    );
+
+    collecte::vider();
+    collecte::nom_detecte(None);
+    let _ = std::fs::remove_dir_all(&dossier);
+}
