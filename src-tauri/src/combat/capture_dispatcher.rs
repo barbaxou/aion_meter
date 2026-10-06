@@ -29,6 +29,49 @@ const COMBAT_SIGNATURES: [&[u8]; 2] = [
     &[0x0E, 0x00, 0x36], // current (post June 2026) record terminator
     &[0x06, 0x00, 0x36], // legacy terminator (pre June 2026)
 ];
+
+/// Les marques de la fiche de personnage : gardées avant verrouillage, mais
+/// **sans jamais compter pour le verrouillage lui-même**.
+///
+/// La distinction est tout l'objet de cette constante. Le verrou doit rester
+/// strict : c'est lui qui a évité de se verrouiller sur un service tiers du
+/// poste (observé sur le port 16005 à froid), et il se mérite par une *cadence*
+/// de signatures que seul le flux du jeu en monde produit. Décider de
+/// **garder** un paquet est une autre question, et beaucoup moins risquée :
+/// au pire on journalise un paquet de trop.
+///
+/// Mesuré le 06/10/2026, en capturant la même session avec un meter tiers qui
+/// ne filtre pas :
+///
+/// ```text
+/// opcode                 sur le câble   dans notre capture
+/// 11 56  inventaire            2              absent
+/// 56 36  Combat Power          6              absent
+/// 49 36  PlayerStats           2              absent
+/// ```
+///
+/// Ces paquets arrivent **seuls**, sans aucun enregistrement de combat, donc
+/// sans signature — et le filtre d'avant-verrouillage les jetait tous. La fiche
+/// s'en sortait par accident : elle voyage imbriquée dans de gros paquets qui,
+/// eux, contiennent des enregistrements de combat. C'est pour cela que le nom
+/// et le niveau remontaient au site, et jamais l'équipement.
+const MARQUES_FICHE: [&[u8]; 5] = [
+    &[0x33, 0x36], // PlayerInfo — la fiche
+    &[0x11, 0x56], // Inventaire — l'équipement
+    &[0x56, 0x36], // Combat Power
+    &[0x00, 0x90], // Pets
+    &[0x49, 0x36], // PlayerStats
+];
+
+/// Faut-il garder ce paquet alors que le port n'est pas encore verrouillé ?
+///
+/// Isolée parce que c'est elle qui décide si un paquet existe ou non pour le
+/// reste du meter, et qu'elle ne devait pas rester invérifiable au fond d'une
+/// boucle asynchrone. Garder n'est pas verrouiller : le verrou, lui, continue
+/// de ne compter que les vraies signatures de combat.
+fn garder_avant_verrou(data: &[u8]) -> bool {
+    contains_any(data, &COMBAT_SIGNATURES) || contains_any(data, &MARQUES_FICHE)
+}
 /// How many signature-bearing server->client packets a single flow must produce
 /// *within SIGNATURE_WINDOW_MS* before it may lock the port. The live game stream
 /// emits the record terminator ~19x/sec even while idle (movement/heartbeat), so it
@@ -332,7 +375,11 @@ impl CaptureDispatcher {
                 continue;
             }
 
-            if unlocked && !contains_any(&cap.data, &COMBAT_SIGNATURES) {
+            // Garder, ce n'est pas verrouiller. Un paquet qui porte une marque
+            // de fiche est conservé même sans signature de combat ; il ne
+            // compte pas pour autant dans la cadence qui décide du verrou.
+            let porte_signature = contains_any(&cap.data, &COMBAT_SIGNATURES);
+            if unlocked && !garder_avant_verrou(&cap.data) {
                 continue;
             }
 
@@ -353,7 +400,12 @@ impl CaptureDispatcher {
                 (StreamAssembler::new(), proc)
             });
 
-            if unlocked {
+            // **Seules les vraies signatures comptent pour le verrou.** Sans ce
+            // `porte_signature`, les paquets de fiche qu'on vient de laisser
+            // passer gonfleraient la cadence et pourraient verrouiller le port
+            // sur un flux qui n'est pas le jeu — ce que le seuil existe
+            // précisément pour empêcher.
+            if unlocked && porte_signature {
                 self.port_detector.register_candidate(cap.src_port, key, cap.device_name.as_deref());
                 // Count this signature-bearing packet against its source port (the
                 // signature only ever travels server->client). The lock decision is
@@ -448,6 +500,53 @@ mod tests {
             tcp_seq: 0,
             tcp_ack: 0,
         }
+    }
+
+    /// Un paquet de fiche doit survivre au filtre d'avant-verrouillage.
+    ///
+    /// Mesuré le 06/10/2026 en capturant la même session avec un meter tiers qui
+    /// ne filtre pas, sur la même machine et au même instant :
+    ///
+    ///     opcode                 sur le câble   dans notre capture
+    ///     11 56  inventaire            2              absent
+    ///     56 36  Combat Power          6              absent
+    ///     49 36  PlayerStats           2              absent
+    ///
+    /// Ces paquets arrivent seuls, sans aucun enregistrement de combat, donc
+    /// sans signature — et le filtre les jetait tous. L'équipement de barbaxou
+    /// n'est jamais remonté au site de toute la journée pour cette seule raison,
+    /// alors que notre décodeur le lit parfaitement : nourri de la capture non
+    /// filtrée, il rend ses 22 pièces avec les bons enchantements.
+    ///
+    /// La fiche s'en sortait par accident : elle voyage imbriquée dans de gros
+    /// paquets qui, eux, contiennent des enregistrements de combat.
+    #[test]
+    fn un_paquet_de_fiche_survit_au_filtre_davant_verrouillage() {
+        // Un paquet d'inventaire tel qu'il arrive : la marque, pas de signature.
+        let inventaire = [0x16u8, 0x11, 0x56, 0x01, 0x02, 0x03, 0x04];
+        assert!(
+            !contains_any(&inventaire, &COMBAT_SIGNATURES),
+            "témoin : ce paquet ne porte bien aucune signature de combat"
+        );
+        assert!(
+            garder_avant_verrou(&inventaire),
+            "l'inventaire doit être gardé ; le jeter est ce qui a privé le site              de l'équipement toute la journée du 06/10/2026"
+        );
+
+        // Un paquet de combat ordinaire : gardé comme avant.
+        let combat = [0x16u8, 0x04, 0x38, 0x0E, 0x00, 0x36, 0x01];
+        assert!(
+            garder_avant_verrou(&combat),
+            "témoin : un paquet de combat doit continuer de passer"
+        );
+
+        // Et ce qui n'est ni l'un ni l'autre reste écarté : le filtre doit
+        // toujours filtrer, sinon on journalise tout le trafic du poste.
+        let quelconque = [0x17u8, 0x03, 0x01, 0x00, 0x42, 0x42, 0x42];
+        assert!(
+            !garder_avant_verrou(&quelconque),
+            "un paquet sans rapport ne doit pas passer : le filtre protège aussi              la vie privée du membre, puisque ce qui passe est journalisé"
+        );
     }
 
     #[test]
