@@ -72,6 +72,39 @@ const MARQUES_FICHE: [&[u8]; 5] = [
 fn garder_avant_verrou(data: &[u8]) -> bool {
     contains_any(data, &COMBAT_SIGNATURES) || contains_any(data, &MARQUES_FICHE)
 }
+
+/// Le flux verrouillé s'est-il tu alors qu'un autre porte le jeu ?
+///
+/// Isolée pour être vérifiable : c'est elle qui décide d'abandonner une
+/// connexion, et elle ne devait pas rester au fond d'une boucle asynchrone.
+///
+/// Elle **relâche**, elle ne reverrouille pas : la logique de verrouillage
+/// existante reprend la main avec son seuil et sa fenêtre, et c'est elle qui
+/// empêche de se verrouiller sur un service tiers du poste.
+fn relacher_le_verrou(
+    port: u16,
+    cadences: &HashMap<(u16, u16), (u32, i64)>,
+    maintenant: i64,
+) -> bool {
+    let derniere_du_verrou = cadences
+        .iter()
+        .filter(|(k, _)| k.0 == port || k.1 == port)
+        .map(|(_, (_, t))| *t)
+        .max();
+    // Jamais rien vu de ce flux : on ne décide rien, faute de mesure.
+    let Some(derniere) = derniere_du_verrou else {
+        return false;
+    };
+    if maintenant - derniere <= SILENCE_AVANT_MIGRATION_MS {
+        return false;
+    }
+    cadences.iter().any(|(k, (compte, t))| {
+        k.0 != port
+            && k.1 != port
+            && *compte >= SIGNATURE_LOCK_THRESHOLD
+            && maintenant - *t <= SIGNATURE_WINDOW_MS
+    })
+}
 /// How many signature-bearing server->client packets a single flow must produce
 /// *within SIGNATURE_WINDOW_MS* before it may lock the port. The live game stream
 /// emits the record terminator ~19x/sec even while idle (movement/heartbeat), so it
@@ -89,6 +122,16 @@ const TLS_VERSIONS: [u8; 5] = [0x00, 0x01, 0x02, 0x03, 0x04];
 const WINDOW_CHECK_STOPPED_MS: i64 = 10_000;
 const WINDOW_CHECK_RUNNING_MS: i64 = 60_000;
 const STALE_CONNECTION_MS: i64 = 120_000;
+/// Combien de temps le flux verrouillé peut rester sans porter une seule
+/// signature avant qu'un autre flux puisse lui prendre la place.
+///
+/// Le flux du jeu en monde émet le terminateur d'enregistrement une vingtaine
+/// de fois par seconde, même à l'arrêt : dix secondes de silence complet ne
+/// sont pas un creux, c'est une connexion qui n'est plus la bonne. Bien plus
+/// court que `STALE_CONNECTION_MS`, qui exige 120 s **sans paquet analysé** et
+/// ne se déclenchait donc jamais tant que l'ancienne connexion gardait un
+/// filet de trafic.
+const SILENCE_AVANT_MIGRATION_MS: i64 = 10_000;
 /// While no port is locked, how often to log what the capture is seeing. Before
 /// the lock every gate is silent, so without this a meter that never locks
 /// leaves a log that cannot say why.
@@ -312,8 +355,10 @@ impl CaptureDispatcher {
                 }
             }
 
-            let current_port = self.port_detector.current_port();
-            let locked_device = self.port_detector.current_device();
+            // Modifiables : le verrou peut être relâché au cours de ce tour,
+            // quand un autre flux porte le jeu.
+            let mut current_port = self.port_detector.current_port();
+            let mut locked_device = self.port_detector.current_device();
 
             // Ajout XIII NRV : situer la perte. En solo nos totaux tombent au
             // chiffre près sur l'analyseur du jeu ; à cinq en donjon il manque
@@ -339,6 +384,64 @@ impl CaptureDispatcher {
                     if !device_matches(pref, cap.device_name.as_deref()) {
                         continue;
                     }
+                }
+            }
+
+            // Le verrou doit pouvoir migrer : suivre la cadence de **tous** les
+            // flux, y compris une fois verrouillé.
+            //
+            // Mesuré le 07/10/2026, en capturant la même session avec un meter
+            // tiers : quand le client rouvre une connexion — relance du jeu,
+            // bascule de personnage — le jeu passe sur un **nouveau port**.
+            //
+            // ```text
+            // lui   Client:49422   14:24:05 -> 14:28:39   5597 lignes
+            // nous  Client:13328   14:09:53 -> 14:28:39  28222 lignes
+            // ```
+            //
+            // Notre verrou restait collé à 13328, la connexion de la session
+            // précédente, qui produit encore assez de trafic pour ne jamais
+            // paraître périmée — la péremption exige 120 s **sans paquet
+            // analysé**. Tout ce qui comptait passait sur 49422, invisible pour
+            // nous : ni l'inventaire, ni la fiche du second personnage, et 436
+            // paquets de dégâts au lieu de 1555.
+            //
+            // Le comptage doit donc précéder le filtre de port, sinon on ne
+            // verra jamais le flux qui devrait prendre la place.
+            let cle_flux = (cap.src_port.min(cap.dst_port), cap.src_port.max(cap.dst_port));
+            let porte_signature = contains_any(&cap.data, &COMBAT_SIGNATURES);
+            if porte_signature {
+                let maintenant = now_ms();
+                let creneau = sig_hits.entry(cle_flux).or_insert((0, maintenant));
+                if maintenant - creneau.1 > SIGNATURE_WINDOW_MS {
+                    creneau.0 = 0;
+                }
+                creneau.0 += 1;
+                creneau.1 = maintenant;
+            }
+
+            // Relâcher le verrou quand le flux verrouillé s'est taxé alors qu'un
+            // autre soutient la cadence du jeu.
+            //
+            // On **relâche**, on ne reverrouille pas soi-même : la logique de
+            // verrouillage existante, avec son seuil et sa fenêtre, reprend
+            // aussitôt la main et choisit le bon flux. C'est elle qui empêche de
+            // se verrouiller sur un service tiers du poste — déjà vu sur le port
+            // 16005 — et il n'était pas question de la contourner.
+            if let Some(port) = current_port {
+                if relacher_le_verrou(port, &sig_hits, now_ms()) {
+                    info!(
+                        "Le port {} s'est tu depuis plus de {} s alors qu'un autre flux porte le jeu : verrou relâché",
+                        port,
+                        SILENCE_AVANT_MIGRATION_MS / 1000
+                    );
+                    self.port_detector.reset();
+                    self.ping_tracker.reset();
+                    assemblers.clear();
+                    // Les cadences sont conservées : le nouveau flux a déjà fait
+                    // ses preuves, le reverrouillage est immédiat.
+                    current_port = None;
+                    locked_device = None;
                 }
             }
 
@@ -413,13 +516,9 @@ impl CaptureDispatcher {
                 // while the assembler for this flow is still borrowed.
                 // Windowed signature rate: reset the count if too long since the last
                 // hit, so only a sustained high-rate flow (the live game) accumulates.
-                let now = now_ms();
-                let slot = sig_hits.entry(key).or_insert((0, now));
-                if now - slot.1 > SIGNATURE_WINDOW_MS {
-                    slot.0 = 0;
-                }
-                slot.0 += 1;
-                slot.1 = now;
+                // La cadence est désormais comptée plus haut, pour tous les
+                // flux : sans cela on ne verrait jamais celui qui devrait
+                // prendre la place du flux verrouillé.
             }
 
             // A flow locks the port only by sustaining the game's signature RATE
@@ -546,6 +645,68 @@ mod tests {
         assert!(
             !garder_avant_verrou(&quelconque),
             "un paquet sans rapport ne doit pas passer : le filtre protège aussi              la vie privée du membre, puisque ce qui passe est journalisé"
+        );
+    }
+
+    /// Le verrou doit lâcher une connexion morte au profit de celle qui porte
+    /// le jeu — et ne lâcher que dans ce cas.
+    ///
+    /// Mesuré le 07/10/2026 en capturant la même session avec un meter tiers.
+    /// Quand le client rouvre une connexion — relance du jeu, bascule de
+    /// personnage — le jeu passe sur un nouveau port :
+    ///
+    /// ```text
+    /// lui   Client:49422   14:24:05 -> 14:28:39   5597 lignes
+    /// nous  Client:13328   14:09:53 -> 14:28:39  28222 lignes
+    /// ```
+    ///
+    /// Notre verrou restait sur 13328, la connexion précédente, qui gardait
+    /// juste assez de trafic pour ne jamais paraître périmée : la péremption
+    /// exige 120 s **sans paquet analysé**. L'inventaire et la fiche du second
+    /// personnage passaient sur 49422 et nous étaient invisibles.
+    #[test]
+    fn le_verrou_lache_une_connexion_morte_mais_pas_un_creux() {
+        let t = 1_000_000i64;
+        let verrouille = (13328u16, 40000u16);
+        let autre = (49422u16, 40001u16);
+        let port = 13328u16;
+
+        // Le cas du 07/10 : le flux verrouillé s'est tu, l'autre porte le jeu.
+        let mut cadences = HashMap::new();
+        cadences.insert(verrouille, (30u32, t - 30_000));
+        cadences.insert(autre, (SIGNATURE_LOCK_THRESHOLD, t - 500));
+        assert!(
+            relacher_le_verrou(port, &cadences, t),
+            "une connexion muette depuis 30 s doit céder la place à celle qui              porte le jeu ; c'est ce qui privait le site de l'équipement"
+        );
+
+        // Un simple creux ne doit rien déclencher : le flux verrouillé parle
+        // encore.
+        let mut cadences = HashMap::new();
+        cadences.insert(verrouille, (30u32, t - 2_000));
+        cadences.insert(autre, (SIGNATURE_LOCK_THRESHOLD, t - 500));
+        assert!(
+            !relacher_le_verrou(port, &cadences, t),
+            "témoin : tant que le flux verrouillé porte des signatures, on le garde"
+        );
+
+        // Muet, mais personne d'autre ne soutient la cadence : on ne lâche pas.
+        // C'est ce qui empêche un service tiers du poste de voler le verrou.
+        let mut cadences = HashMap::new();
+        cadences.insert(verrouille, (30u32, t - 30_000));
+        cadences.insert(autre, (SIGNATURE_LOCK_THRESHOLD - 1, t - 500));
+        assert!(
+            !relacher_le_verrou(port, &cadences, t),
+            "témoin : sans un autre flux qui atteint le seuil, on ne lâche rien"
+        );
+
+        // Et un autre flux qui a atteint le seuil il y a longtemps ne compte pas.
+        let mut cadences = HashMap::new();
+        cadences.insert(verrouille, (30u32, t - 30_000));
+        cadences.insert(autre, (SIGNATURE_LOCK_THRESHOLD, t - 60_000));
+        assert!(
+            !relacher_le_verrou(port, &cadences, t),
+            "témoin : la cadence de l'autre flux doit être récente"
         );
     }
 
