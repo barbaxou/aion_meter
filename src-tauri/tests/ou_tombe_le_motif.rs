@@ -123,6 +123,13 @@ fn ou_tombe_le_motif_dans_un_paquet() {
         aplatir(&complet, &mut paquets, 0);
     }
 
+    // Où le découpage a perdu l'alignement, compté par le produit lui-même.
+    println!(
+        "
+{}",
+        xiiinrv_meter_lib::capture::framing::diag_reprises::bilan()
+    );
+
     // Seuls les paquets de taille plausible : au-delà, c'est un faux paquet
     // produit par un désalignement, et il fausserait la mesure.
     let plausibles: Vec<&Vec<u8>> = paquets.iter().filter(|p| p.len() <= 8192).collect();

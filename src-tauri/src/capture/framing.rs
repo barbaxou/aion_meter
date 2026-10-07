@@ -49,6 +49,52 @@ const MAX_FRAGMENT_WAIT_BYTES: usize = MAX_PACKET_BYTES;
 /// Refuse to allocate for a bundle claiming to decompress to more than this.
 const MAX_DECOMPRESSED_BYTES: usize = 1_000_000;
 
+/// Où le découpage perd l'alignement, et à quel prix.
+///
+/// Dans le produit et non dans un outil parallèle : un diagnostic qui ne
+/// reproduit pas exactement le chemin du produit mesure autre chose que lui.
+/// L'erreur a été commise cinq fois le 07/10/2026.
+///
+/// Les trois reprises ci-dessous avancent d'un octet et réessaient. C'est ce
+/// qui finit par retomber sur une longueur plausible **par hasard** et émet un
+/// faux paquet qui avale les vrais : dix blocs de 8 à 32 Ko absorbaient 11 %
+/// de nos octets, contre 4 % chez un meter qui se réancre sur le battement de
+/// cœur du jeu. Avant de changer quoi que ce soit, il faut savoir **laquelle**
+/// des trois déclenche.
+pub mod diag_reprises {
+    use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+
+    /// Varint de longueur illisible.
+    pub static VARINT: AtomicU64 = AtomicU64::new(0);
+    /// Longueur nulle ou au-delà de `MAX_PACKET_BYTES`.
+    pub static TAILLE: AtomicU64 = AtomicU64::new(0);
+    /// Longueur trop grande pour être un fragment qu'on attend.
+    pub static FRAGMENT: AtomicU64 = AtomicU64::new(0);
+    /// Octets franchis par ces reprises, un par un.
+    pub static OCTETS_FRANCHIS: AtomicU64 = AtomicU64::new(0);
+
+    pub fn noter(compteur: &AtomicU64) {
+        compteur.fetch_add(1, Relaxed);
+        OCTETS_FRANCHIS.fetch_add(1, Relaxed);
+    }
+
+    pub fn bilan() -> String {
+        format!(
+            "reprises du découpage — varint {} | taille {} | fragment {} | {} octets franchis",
+            VARINT.load(Relaxed),
+            TAILLE.load(Relaxed),
+            FRAGMENT.load(Relaxed),
+            OCTETS_FRANCHIS.load(Relaxed)
+        )
+    }
+
+    pub fn remettre_a_zero() {
+        for c in [&VARINT, &TAILLE, &FRAGMENT, &OCTETS_FRANCHIS] {
+            c.store(0, Relaxed);
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameKind {
     /// A plain packet. `range` covers the whole thing, length prefix included.
@@ -114,6 +160,7 @@ pub fn walk(buffer: &[u8]) -> Framing {
             if offset + 5 > buffer.len() {
                 break;
             }
+            diag_reprises::noter(&diag_reprises::VARINT);
             offset += 1;
             continue;
         }
@@ -123,6 +170,7 @@ pub fn walk(buffer: &[u8]) -> Framing {
 
         // Resync on invalid sizes.
         if total_packet_bytes == 0 || total_packet_bytes > MAX_PACKET_BYTES {
+            diag_reprises::noter(&diag_reprises::TAILLE);
             offset += 1;
             continue;
         }
@@ -130,6 +178,7 @@ pub fn walk(buffer: &[u8]) -> Framing {
         // 3. TCP fragmentation check (anti-stall gate).
         if offset + total_packet_bytes > buffer.len() {
             if total_packet_bytes > MAX_FRAGMENT_WAIT_BYTES {
+                diag_reprises::noter(&diag_reprises::FRAGMENT);
                 offset += 1;
                 continue;
             }
