@@ -148,13 +148,18 @@ static LECTURE_OUVERTE: AtomicBool = AtomicBool::new(false);
 pub fn ouvrir_lecture(ouverte: bool) {
     let avant = LECTURE_OUVERTE.swap(ouverte, Ordering::Relaxed);
     if avant && !ouverte {
-        // On vient de refermer : on n'a aucune raison de garder la fiche, ni en
-        // mémoire ni sur le disque. C'est le **seul** effacement du fichier, et
-        // il demande un geste du membre — tout le reste ne fait qu'ajouter.
+        // On vient de refermer : la mémoire est vidée, **mais pas le fichier**.
+        //
+        // Il l'était, jusqu'au 06/10/2026 au soir. C'était une faute : cette
+        // fermeture ne survient pas seulement quand le membre décoche sa case,
+        // et une transition qu'on ne maîtrise pas ne doit pas détruire des
+        // données que le jeu ne renverra jamais. Les pets de barbaxou ont
+        // disparu ainsi, une heure après avoir été lus.
+        //
+        // Laisser le fichier est sans danger : rien n'en est lu tant que la
+        // lecture est fermée, et recocher la case rend au membre sa propre
+        // fiche.
         vider();
-        if let Some(chemin) = fichier().lock().clone() {
-            let _ = std::fs::remove_file(chemin);
-        }
     }
 }
 
@@ -501,6 +506,7 @@ fn lire_fiche(packet: &[u8]) {
     };
     let (pv, pm) = lire_pv_pm(packet);
 
+    let mut a_change = false;
     let mut e = etat().lock();
     // Changement de personnage : ce qui a été lu il y a longtemps appartient au
     // précédent, et une fiche mélangée serait pire que pas de fiche du tout. Ce
@@ -512,14 +518,30 @@ fn lire_fiche(packet: &[u8]) {
             nom
         );
         e.changer_de_personnage(std::time::Instant::now());
+        a_change = true;
     }
-    e.nom = Some(nom);
+    e.nom = Some(nom.clone());
     e.serveur = Some(nom_du_serveur(serveur));
     e.niveau = Some(niveau);
     e.item_level = Some(item_level);
     if pv.is_some() {
         e.pv = pv;
         e.pm = pm;
+    }
+    drop(e);
+
+    // Rendre à ce personnage ce que le disque sait déjà de lui.
+    //
+    // `changer_de_personnage` vient de vider l'équipement et les pets, et c'est
+    // juste : ils appartenaient au précédent. Mais ceux de **celui-ci** ont
+    // peut-être été lus lors d'une session passée, et le jeu ne les renverra
+    // qu'à la prochaine connexion du client. Le 07/10/2026, barbaxou a perdu
+    // ainsi les 25 pièces de Barbax en passant sur Barbaxou : rien ne pouvait
+    // les lui rendre au retour.
+    //
+    // Le verrou est relâché avant l'appel : `restaurer_pour` prend le sien.
+    if a_change {
+        restaurer_pour(&nom);
     }
 }
 
@@ -803,32 +825,47 @@ fn trouver_entete_genus(packet: &[u8], id: u8) -> Option<usize> {
 }
 
 // ---------------------------------------------------------------------------
-// Persistance de la fiche
+// Persistance des fiches
 // ---------------------------------------------------------------------------
 
-/// Où la fiche est conservée entre deux lancements. Posé au démarrage.
+/// Où les fiches sont conservées entre deux lancements. Posé au démarrage.
 ///
 /// Un `Mutex` et non un `OnceLock` : c'est une configuration, pas une
 /// constante. Avec un `OnceLock`, le premier appel gagnait et les suivants
-/// étaient ignorés en silence — ce qui rendait la chose intestable dès qu'un
-/// second test voulait son propre dossier, et ne protégeait de rien.
+/// étaient ignorés en silence, ce qui ne protégeait de rien et rendait la
+/// chose intestable.
 static FICHIER: OnceLock<Mutex<Option<std::path::PathBuf>>> = OnceLock::new();
 
 fn fichier() -> &'static Mutex<Option<std::path::PathBuf>> {
     FICHIER.get_or_init(|| Mutex::new(None))
 }
 
-/// La fiche telle qu'elle est écrite sur le disque.
+/// Le fichier : **une fiche par personnage**, et le nom du dernier joué.
+///
+/// Il n'en contenait qu'une seule jusqu'au 07/10/2026, et c'était une faute.
+/// barbaxou avait 25 pièces d'équipement sur Barbax, lues et enregistrées.
+/// Passer sur Barbaxou a vidé l'équipement en mémoire — ce que
+/// `changer_de_personnage` doit faire — puis la sauvegarde a écrasé le fichier
+/// avec la fiche de Barbaxou. Revenir sur Barbax ne pouvait plus rien
+/// restaurer : ses 25 pièces étaient perdues, et le jeu ne les renvoie qu'à la
+/// prochaine connexion du client.
+#[derive(Serialize, Deserialize, Default)]
+struct FichesEnregistrees {
+    /// Le personnage de la dernière sauvegarde, relu au démarrage.
+    dernier: Option<String>,
+    /// Les fiches, par nom de personnage.
+    fiches: std::collections::HashMap<String, FicheEnregistree>,
+}
+
+/// La fiche d'un personnage, telle qu'elle est écrite sur le disque.
 ///
 /// Volontairement distincte de [`Etat`] : les horodatages (`cp_vu_le`,
 /// `equipement_vu_le`, `pets_vu_le`) et le décompte du défilement **ne sont pas
 /// conservés**, et ce n'est pas un oubli. Ce sont des `Instant`, qui n'ont de
 /// sens que dans le processus qui les a pris, et surtout ils servent à dire
 /// « cela vient de la même entrée en jeu ». Rien de ce qui est relu d'une
-/// session précédente n'en fait partie : au prochain changement de personnage,
-/// l'équipement et les pets relus seront donc jetés, ce qui est le bon
-/// comportement.
-#[derive(Serialize, Deserialize, Default)]
+/// session précédente n'en fait partie.
+#[derive(Serialize, Deserialize, Default, Clone)]
 struct FicheEnregistree {
     nom: Option<String>,
     serveur: Option<String>,
@@ -846,7 +883,7 @@ struct FicheEnregistree {
 /// Un genus sur le disque. [`Genus`] porte un `&'static str`, qui s'écrit mais
 /// ne se relit pas : le nom est donc stocké en clair et retrouvé dans la table
 /// [`GENUS`] à la relecture. Un nom inconnu est ignoré plutôt que deviné.
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 struct GenusEnregistre {
     genus: String,
     niveau: u32,
@@ -854,35 +891,42 @@ struct GenusEnregistre {
     effets: Vec<Effet>,
 }
 
-/// Dit où conserver la fiche. À appeler une fois, au démarrage.
+/// Dit où conserver les fiches. À appeler une fois, au démarrage.
 pub fn fichier_de_sauvegarde(chemin: std::path::PathBuf) {
     *fichier().lock() = Some(chemin);
 }
 
-/// Relit la fiche de la session précédente.
+/// Relit le fichier, en acceptant l'ancien format à une seule fiche.
 ///
-/// **C'est la raison d'être de tout ceci.** Le jeu n'envoie la fiche complète,
-/// l'équipement, le Combat Power et les pets qu'**une fois par connexion du
-/// client**. Jusqu'ici l'état ne vivait qu'en mémoire : chaque redémarrage du
-/// meter l'effaçait, et le jeu ne le renvoyait pas. Dans la nuit du 06/10/2026,
-/// six redémarrages ont ainsi effacé six fois ce qui avait été lu, et barbaxou
-/// a passé la soirée à rouvrir des écrans qui ne redemandaient rien.
-///
-/// Ne fait rien si le partage est fermé : sans lecture, il n'y a pas de fiche à
-/// tenir.
-pub fn charger() {
-    if !lecture_ouverte() {
-        return;
-    }
-    let Some(chemin) = fichier().lock().clone() else { return };
-    let Ok(texte) = std::fs::read_to_string(chemin) else { return };
-    let Ok(f) = serde_json::from_str::<FicheEnregistree>(&texte) else {
-        info!("XIII NRV : fiche enregistrée illisible, on repart de zéro");
-        return;
+/// La reprise de l'ancien format n'est pas de la politesse : sans elle, la
+/// première sauvegarde du nouveau code effacerait ce que le membre avait déjà,
+/// et ces données ne reviennent qu'à la prochaine connexion du client.
+fn lire_le_fichier(chemin: &std::path::Path) -> FichesEnregistrees {
+    let Ok(texte) = std::fs::read_to_string(chemin) else {
+        return FichesEnregistrees::default();
     };
+    if let Ok(f) = serde_json::from_str::<FichesEnregistrees>(&texte) {
+        if !f.fiches.is_empty() || f.dernier.is_some() {
+            return f;
+        }
+    }
+    // Ancien format : une seule fiche, à la racine du fichier.
+    if let Ok(seule) = serde_json::from_str::<FicheEnregistree>(&texte) {
+        if let Some(nom) = seule.nom.clone() {
+            let mut fiches = std::collections::HashMap::new();
+            fiches.insert(nom.clone(), seule);
+            return FichesEnregistrees {
+                dernier: Some(nom),
+                fiches,
+            };
+        }
+    }
+    FichesEnregistrees::default()
+}
 
-    let pets: Vec<Genus> = f
-        .pets
+/// Les pets du disque, rendus à leur nom statique. Un nom inconnu est ignoré.
+fn pets_depuis_le_disque(stockes: Vec<GenusEnregistre>) -> Vec<Genus> {
+    stockes
         .into_iter()
         .filter_map(|g| {
             GENUS
@@ -895,8 +939,34 @@ pub fn charger() {
                     effets: g.effets,
                 })
         })
-        .collect();
+        .collect()
+}
 
+/// Relit la fiche du dernier personnage joué.
+///
+/// **C'est la raison d'être de tout ceci.** Le jeu n'envoie la fiche complète,
+/// l'équipement, le Combat Power et les pets qu'**une fois par connexion du
+/// client**. Sans cela, chaque redémarrage du meter efface ce qui avait été lu,
+/// et rien ne le renvoie.
+///
+/// Ne fait rien si le partage est fermé : sans lecture, il n'y a pas de fiche à
+/// tenir.
+pub fn charger() {
+    if !lecture_ouverte() {
+        return;
+    }
+    let Some(chemin) = fichier().lock().clone() else {
+        return;
+    };
+    let tout = lire_le_fichier(&chemin);
+    let Some(dernier) = tout.dernier.clone() else {
+        return;
+    };
+    let Some(f) = tout.fiches.get(&dernier).cloned() else {
+        return;
+    };
+
+    let connus = tout.fiches.len();
     let mut e = etat().lock();
     e.nom = f.nom;
     e.serveur = f.serveur;
@@ -906,48 +976,117 @@ pub fn charger() {
     e.pm = f.pm;
     e.combat_power = f.combat_power;
     e.equipement = f.equipement;
-    e.pets = pets;
+    e.pets = pets_depuis_le_disque(f.pets);
     info!(
-        "XIII NRV : fiche relue du disque — {} — {} pièces, {} pets",
+        "XIII NRV : fiche relue du disque — {} — {} pièces, {} pets ({} personnage(s) connu(s))",
         e.nom.as_deref().unwrap_or("(pas de nom)"),
+        e.equipement.len(),
+        e.pets.len(),
+        connus
+    );
+}
+
+/// Rend à un personnage ce que le disque sait déjà de lui.
+///
+/// Appelée quand le jeu annonce un changement de personnage.
+/// `changer_de_personnage` vient de vider l'équipement et les pets, et c'est
+/// juste : ils appartenaient au précédent. Mais ceux de **celui-ci** ont
+/// peut-être été lus lors d'une session passée, et le jeu ne les renverra qu'à
+/// la prochaine connexion du client.
+///
+/// Ne reprend que ce qui manque : ce qui vient d'être lu en direct est meilleur.
+pub fn restaurer_pour(nom: &str) {
+    if !lecture_ouverte() {
+        return;
+    }
+    let Some(chemin) = fichier().lock().clone() else {
+        return;
+    };
+    let tout = lire_le_fichier(&chemin);
+    let Some(f) = tout.fiches.get(nom).cloned() else {
+        return;
+    };
+
+    let mut e = etat().lock();
+    if e.equipement.is_empty() && !f.equipement.is_empty() {
+        e.equipement = f.equipement;
+    }
+    if e.pets.is_empty() && !f.pets.is_empty() {
+        e.pets = pets_depuis_le_disque(f.pets);
+    }
+    if e.pv.is_none() {
+        e.pv = f.pv;
+    }
+    if e.pm.is_none() {
+        e.pm = f.pm;
+    }
+    if e.combat_power.is_none() {
+        e.combat_power = f.combat_power;
+    }
+    if e.item_level.is_none() {
+        e.item_level = f.item_level;
+    }
+    info!(
+        "XIII NRV : fiche de {} retrouvée sur le disque — {} pièces, {} pets",
+        nom,
         e.equipement.len(),
         e.pets.len()
     );
 }
 
-/// Écrit la fiche courante. Appelée quand son résumé change.
-///
-/// Écriture dans un fichier temporaire puis renommage : une coupure de courant
-/// au mauvais moment laisserait sinon un fichier tronqué, et le membre
-/// perdrait justement ce qu'on cherche à préserver.
-pub fn enregistrer() {
-    let Some(chemin) = fichier().lock().clone() else { return };
-
-    // **Ne jamais écrire une fiche vide.** Elle ne porte aucune information et
-    // ne peut donc que détruire. Le cas qui compte : le meter démarre, la
-    // relecture ne rend rien — fichier illisible, ou partage décoché à ce
-    // moment-là — et le premier enregistrement écraserait ce que le membre
-    // avait. La correction détruirait exactement ce qu'elle doit préserver.
-    //
-    // Effacer reste possible, mais seulement sur un geste explicite : décocher
-    // le partage supprime le fichier (voir `ouvrir_lecture`).
-    {
-        let e = etat().lock();
-        let vide = e.nom.is_none()
-            && e.niveau.is_none()
-            && e.item_level.is_none()
-            && e.combat_power.is_none()
-            && e.equipement.is_empty()
-            && e.pets.is_empty();
-        if vide {
-            return;
-        }
+/// Complète `neuve` avec ce que `ancienne` sait déjà. Ne retire jamais rien.
+fn fusionner(ancienne: FicheEnregistree, mut neuve: FicheEnregistree) -> FicheEnregistree {
+    if neuve.serveur.is_none() {
+        neuve.serveur = ancienne.serveur;
     }
+    if neuve.niveau.is_none() {
+        neuve.niveau = ancienne.niveau;
+    }
+    if neuve.item_level.is_none() {
+        neuve.item_level = ancienne.item_level;
+    }
+    if neuve.pv.is_none() {
+        neuve.pv = ancienne.pv;
+    }
+    if neuve.pm.is_none() {
+        neuve.pm = ancienne.pm;
+    }
+    if neuve.combat_power.is_none() {
+        neuve.combat_power = ancienne.combat_power;
+    }
+    if neuve.equipement.is_empty() {
+        neuve.equipement = ancienne.equipement;
+    }
+    if neuve.pets.is_empty() {
+        neuve.pets = ancienne.pets;
+    }
+    neuve
+}
 
-    let f = {
+/// Écrit la fiche courante sous le nom de son personnage.
+///
+/// **Sauvegarder ne peut jamais appauvrir.** Le fichier est le meilleur état
+/// connu de chaque personnage : ce qui y est déjà et qui manque en mémoire est
+/// conservé. Sans cette règle, une fiche partielle — un nom, un niveau et un
+/// Combat Power venus du rafraîchissement par le groupe — écrasait une fiche
+/// complète et emportait l'équipement et les pets.
+///
+/// Écriture dans un fichier temporaire puis renommage : une coupure au mauvais
+/// moment laisserait sinon un fichier tronqué, et le membre perdrait justement
+/// ce qu'on cherche à préserver.
+pub fn enregistrer() {
+    let Some(chemin) = fichier().lock().clone() else {
+        return;
+    };
+
+    let courante = {
         let e = etat().lock();
+        // Sans nom, on ne sait pas à qui rattacher la fiche : on n'écrit rien.
+        let Some(nom) = e.nom.clone() else {
+            return;
+        };
         FicheEnregistree {
-            nom: e.nom.clone(),
+            nom: Some(nom),
             serveur: e.serveur.clone(),
             niveau: e.niveau,
             item_level: e.item_level,
@@ -967,9 +1106,23 @@ pub fn enregistrer() {
                 .collect(),
         }
     };
-    let Ok(texte) = serde_json::to_string_pretty(&f) else { return };
+    let Some(nom) = courante.nom.clone() else {
+        return;
+    };
+
+    let mut tout = lire_le_fichier(&chemin);
+    let fusionnee = match tout.fiches.get(&nom) {
+        Some(ancienne) => fusionner(ancienne.clone(), courante),
+        None => courante,
+    };
+    tout.fiches.insert(nom.clone(), fusionnee);
+    tout.dernier = Some(nom);
+
+    let Ok(texte) = serde_json::to_string_pretty(&tout) else {
+        return;
+    };
     let provisoire = chemin.with_extension("tmp");
     if std::fs::write(&provisoire, texte).is_ok() {
-        let _ = std::fs::rename(&provisoire, chemin);
+        let _ = std::fs::rename(&provisoire, &chemin);
     }
 }

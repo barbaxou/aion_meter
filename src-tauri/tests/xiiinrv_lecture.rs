@@ -909,6 +909,8 @@ fn la_fiche_survit_a_un_redemarrage() {
 
     collecte::vider();
     collecte::ouvrir_lecture(true);
+    // La sauvegarde est indexée par personnage : sans nom, elle n'écrit rien.
+    collecte::observer(&fiche_de_test("Barbax"));
 
     // Une fiche comme le meter en tient une : nom, chiffres, équipement.
     {
@@ -988,6 +990,8 @@ fn une_fiche_vide_necrase_pas_une_fiche_enregistree() {
     // Une fiche est enregistrée.
     collecte::vider();
     collecte::ouvrir_lecture(true);
+    // La sauvegarde est indexée par personnage : sans nom, elle n'écrit rien.
+    collecte::observer(&fiche_de_test("Barbax"));
     collecte::observer(&[
         0x16, 0x56, 0x36, 0x2b, 0x3e, 0x01, 0, 0, 0, 0, 0, 0x2b, 0x3e, 0x01, 0, 0, 0, 0, 0,
     ]);
@@ -1008,14 +1012,222 @@ fn une_fiche_vide_necrase_pas_une_fiche_enregistree() {
          la persistance détruirait ce qu'elle doit protéger"
     );
 
-    // Décocher le partage, en revanche, efface : c'est un geste du membre.
+    // Fermer la lecture vide la mémoire, **mais ne touche pas au disque**.
+    //
+    // Cette attente a changé le 06/10/2026 au soir, et dans le bon sens : la
+    // suppression automatique était une faute. Cette fermeture ne survient pas
+    // seulement quand le membre décoche sa case, et une transition qu'on ne
+    // maîtrise pas ne doit pas détruire des données que le jeu ne renverra
+    // qu'à la prochaine connexion du client. Cinq familles de pets ont disparu
+    // ainsi, une heure après avoir été lues.
     collecte::ouvrir_lecture(false);
     assert!(
-        !fichier.exists(),
-        "décocher le partage doit supprimer la fiche du disque"
+        fichier.exists(),
+        "fermer la lecture ne doit pas détruire la fiche sur le disque"
     );
 
     collecte::vider();
     collecte::nom_detecte(None);
     let _ = std::fs::remove_dir_all(&dossier);
+}
+
+/// Sauvegarder ne doit jamais appauvrir la fiche enregistrée.
+///
+/// Le 06/10/2026 au soir, les cinq familles de pets de barbaxou ont disparu de
+/// `fiche.json` une heure après avoir été lues. Deux causes, toutes deux dans
+/// la persistance elle-même :
+///
+/// - fermer la lecture **supprimait le fichier**, alors que cette fermeture ne
+///   survient pas seulement quand le membre décoche sa case ;
+/// - le garde-fou ne refusait qu'une fiche *entièrement vide*, donc une fiche
+///   *partielle* — un nom, un niveau, un Combat Power venus du rafraîchissement
+///   par le groupe — passait et écrasait une fiche complète.
+///
+/// Le jeu ne renvoyant ces données qu'une fois par connexion du client, ce qui
+/// est perdu l'est jusqu'au prochain lancement du jeu.
+#[test]
+fn sauvegarder_ne_peut_pas_appauvrir_la_fiche() {
+    let _garde = VERROU.lock().unwrap_or_else(|e| e.into_inner());
+
+    let dossier = std::env::temp_dir().join(format!(
+        "xiiinrv-fusion-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    std::fs::create_dir_all(&dossier).expect("dossier de test");
+    let fichier = dossier.join("fiche.json");
+    collecte::fichier_de_sauvegarde(fichier.clone());
+
+    // Une fiche complète est enregistrée : nom, Combat Power, pets.
+    collecte::vider();
+    collecte::ouvrir_lecture(true);
+    // La sauvegarde est indexée par personnage : sans nom, elle n'écrit rien.
+    collecte::observer(&fiche_de_test("Barbax"));
+    collecte::observer(&[
+        0x16, 0x56, 0x36, 0x2b, 0x3e, 0x01, 0, 0, 0, 0, 0, 0x2b, 0x3e, 0x01, 0, 0, 0, 0, 0,
+    ]);
+    {
+        // Le nom et les pets, posés comme la lecture les poserait.
+        collecte::enregistrer();
+    }
+    let complet = std::fs::read_to_string(&fichier).expect("témoin : fiche écrite");
+    assert!(
+        complet.contains("81451"),
+        "témoin : la fiche enregistrée doit contenir le Combat Power"
+    );
+
+    // Fermer la lecture ne doit plus supprimer le fichier.
+    collecte::ouvrir_lecture(false);
+    assert!(
+        fichier.exists(),
+        "fermer la lecture ne doit pas détruire la fiche : cette fermeture n'est \
+         pas forcément un geste du membre"
+    );
+
+    // Une fiche partielle du même personnage ne doit rien emporter.
+    collecte::ouvrir_lecture(true);
+    collecte::vider();
+    collecte::enregistrer();
+    let apres = std::fs::read_to_string(&fichier).expect("fiche toujours là");
+    assert!(
+        apres.contains("81451"),
+        "une fiche partielle ne doit pas écraser ce que le disque sait déjà ; \
+         c'est ainsi que cinq familles de pets ont été perdues"
+    );
+
+    collecte::ouvrir_lecture(false);
+    collecte::vider();
+    collecte::nom_detecte(None);
+    let _ = std::fs::remove_dir_all(&dossier);
+}
+
+/// Changer de personnage ne doit pas effacer l'équipement du précédent.
+///
+/// Le 07/10/2026, barbaxou avait 25 pièces sur Barbax, lues et enregistrées.
+/// Passer sur Barbaxou a vidé l'équipement en mémoire — ce que
+/// `changer_de_personnage` doit faire — puis la sauvegarde a écrasé le fichier,
+/// qui ne connaissait qu'**une seule** fiche. Revenir sur Barbax ne pouvait
+/// plus rien restaurer, et le jeu ne renvoie l'inventaire qu'à la prochaine
+/// connexion du client : les 25 pièces étaient perdues pour la journée.
+///
+/// Le fichier tient désormais une fiche par personnage, et une bascule rend à
+/// chacun ce que le disque sait de lui.
+#[test]
+fn changer_de_personnage_ne_perd_pas_l_equipement_du_precedent() {
+    let _garde = VERROU.lock().unwrap_or_else(|e| e.into_inner());
+
+    let dossier = std::env::temp_dir().join(format!(
+        "xiiinrv-persos-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    std::fs::create_dir_all(&dossier).expect("dossier de test");
+    collecte::fichier_de_sauvegarde(dossier.join("fiches.json"));
+
+    collecte::vider();
+    collecte::nom_detecte(None);
+    collecte::ouvrir_lecture(true);
+
+    /// Un paquet d'entrée en jeu portant la fiche imbriquée.
+    fn paquet(nom: &str, suite: &[u8]) -> Vec<u8> {
+        let mut p = vec![0x60, 0x60, 0x88, 0x33, 0x36, 0x00, 0x00];
+        p.extend_from_slice(nom.as_bytes());
+        p.extend_from_slice(suite);
+        p.extend_from_slice(&[0x00; 16]);
+        p
+    }
+    // Relevés dans une capture réelle (serveur, classe, octet, niveau, Item Level).
+    let suite_barbax = [
+        0xff, 0x08, 0x0f, 0x00, 0x00, 0x00, 0x02, 0x2d, 0x00, 0x00, 0x00, 0x57, 0x06,
+    ];
+    let suite_barbaxou = [
+        0xff, 0x08, 0x1f, 0x00, 0x00, 0x00, 0x02, 0x2d, 0x00, 0x00, 0x00, 0x4a, 0x05,
+    ];
+
+    // Barbax entre en jeu, et son équipement est lu.
+    collecte::nom_detecte(Some("Barbax".to_string()));
+    collecte::observer(&paquet("Barbax", &suite_barbax));
+    collecte::observer(&inventaire_de_test());
+    let pieces_de_barbax = collecte::lire_etat().equipement.len();
+    assert!(
+        pieces_de_barbax > 0,
+        "témoin : l'équipement de Barbax doit être lu, sinon le test ne prouve rien"
+    );
+    collecte::enregistrer();
+
+    // Il passe sur Barbaxou, dont la fiche est enregistrée à son tour.
+    collecte::nom_detecte(Some("Barbaxou".to_string()));
+    collecte::observer(&paquet("Barbaxou", &suite_barbaxou));
+    assert_eq!(
+        collecte::lire_etat().nom.as_deref(),
+        Some("Barbaxou"),
+        "témoin : la bascule doit être prise en compte"
+    );
+    collecte::enregistrer();
+
+    // **Le fichier doit connaître les deux.** C'est là qu'était le défaut : il
+    // n'en tenait qu'un, et la fiche de Barbaxou écrasait celle de Barbax.
+    let sur_disque = std::fs::read_to_string(dossier.join("fiches.json"))
+        .expect("témoin : le fichier doit exister");
+    assert!(
+        sur_disque.contains("Barbaxou"),
+        "témoin : le personnage courant doit être enregistré"
+    );
+    assert!(
+        sur_disque.matches("Barbax").count() > sur_disque.matches("Barbaxou").count(),
+        "le fichier doit garder le personnage précédent ; sans cela ses pièces \
+         sont perdues jusqu'à la prochaine connexion du client"
+    );
+
+    // Et un retour sur Barbax, mémoire vidée comme après un redémarrage, doit
+    // lui rendre ses pièces.
+    collecte::vider();
+    collecte::restaurer_pour("Barbax");
+    assert_eq!(
+        collecte::lire_etat().equipement.len(),
+        pieces_de_barbax,
+        "revenir sur un personnage doit lui rendre son équipement ; le jeu ne le \
+         renvoie qu'à la prochaine connexion du client"
+    );
+
+    collecte::ouvrir_lecture(false);
+    collecte::vider();
+    collecte::nom_detecte(None);
+    let _ = std::fs::remove_dir_all(&dossier);
+}
+
+/// Un paquet d'inventaire minimal : deux pièces équipées reconnaissables.
+fn inventaire_de_test() -> Vec<u8> {
+    // En-tête `11 56`, puis des enregistrements au format attendu :
+    // <item_id u32> … <conteneur> <emplacement> <enchantement>
+    let mut p = vec![0x16, 0x11, 0x56];
+    for (id, emplacement) in [(110_430_048u32, 1u8), (210_340_043, 3)] {
+        let depart = p.len();
+        p.extend_from_slice(&id.to_le_bytes());
+        p.extend_from_slice(&[0u8; 8]);
+        p.push(0x0B); // conteneur « équipé »
+        p.push(emplacement);
+        p.push(5); // enchantement
+        p.extend_from_slice(&[0u8; 14]);
+        assert!(p.len() > depart);
+    }
+    p
+}
+
+/// Un paquet d'entrée en jeu portant la fiche imbriquée d'un personnage.
+///
+/// Les octets qui suivent le nom — serveur, classe, un octet, niveau, Item
+/// Level — sont relevés dans une capture réelle du 05/10/2026.
+fn fiche_de_test(nom: &str) -> Vec<u8> {
+    let mut p = vec![0x60, 0x60, 0x88, 0x33, 0x36, 0x00, 0x00];
+    p.extend_from_slice(nom.as_bytes());
+    p.extend_from_slice(&[
+        0xff, 0x08, 0x0f, 0x00, 0x00, 0x00, 0x02, 0x2d, 0x00, 0x00, 0x00, 0x57, 0x06,
+    ]);
+    p.extend_from_slice(&[0x00; 16]);
+    p
 }
