@@ -74,6 +74,21 @@ pub struct Etat {
     /// sans ces dates on ne saurait pas, au changement de personnage, lesquels
     /// appartiennent au nouveau et lesquels à l'ancien.
     pub equipement_vu_le: Option<std::time::Instant>,
+    /// **Quand l'équipement a réellement été lu**, en secondes depuis 1970.
+    ///
+    /// Distinct de `equipement_vu_le`, qui est un `Instant` : celui-ci ne vaut
+    /// que dans le processus qui l'a pris et sert à dire « même entrée en jeu ».
+    /// Celui-là traverse les redémarrages et part au site.
+    ///
+    /// Il existe parce que la fiche est persistée. Le jeu n'envoie l'inventaire
+    /// qu'une fois par connexion : le meter ressort donc la même photo à chaque
+    /// démarrage, et le site, qui n'horodatait que la **réception**, affichait
+    /// « mis à jour il y a 4 min » sur un équipement vieux de huit heures.
+    /// barbaxou l'a constaté le 07/10/2026 — ses pièces améliorées à +7 et +8
+    /// n'apparaissaient pas, alors que la fiche se disait fraîche.
+    ///
+    /// Mieux vaut une donnée datée qu'une donnée qui se prétend à jour.
+    pub equipement_lu_le: Option<i64>,
     pub pets_vu_le: Option<std::time::Instant>,
 }
 
@@ -301,6 +316,14 @@ pub fn lire_etat() -> Etat {
         e.nom = nom_detecte_stock().lock().clone();
     }
     e
+}
+
+/// L'heure courante, en secondes depuis 1970.
+fn maintenant_en_secondes() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
 }
 
 pub fn vider() {
@@ -634,6 +657,7 @@ fn lire_equipement(packet: &[u8]) {
     let mut e = etat().lock();
     e.equipement = pieces;
     e.equipement_vu_le = Some(std::time::Instant::now());
+    e.equipement_lu_le = Some(maintenant_en_secondes());
 }
 
 // ---------------------------------------------------------------------------
@@ -874,6 +898,10 @@ struct FicheEnregistree {
     pv: Option<u32>,
     pm: Option<u32>,
     combat_power: Option<u32>,
+    /// Quand l'équipement a été lu. Conservé, lui, contrairement aux `Instant` :
+    /// c'est ce qui permet de dire au membre si sa photo est fraîche.
+    #[serde(default)]
+    equipement_lu_le: Option<i64>,
     #[serde(default)]
     equipement: Vec<Piece>,
     #[serde(default)]
@@ -975,6 +1003,7 @@ pub fn charger() {
     e.pv = f.pv;
     e.pm = f.pm;
     e.combat_power = f.combat_power;
+    e.equipement_lu_le = f.equipement_lu_le;
     e.equipement = f.equipement;
     e.pets = pets_depuis_le_disque(f.pets);
     info!(
@@ -1010,6 +1039,7 @@ pub fn restaurer_pour(nom: &str) {
     let mut e = etat().lock();
     if e.equipement.is_empty() && !f.equipement.is_empty() {
         e.equipement = f.equipement;
+        e.equipement_lu_le = f.equipement_lu_le;
     }
     if e.pets.is_empty() && !f.pets.is_empty() {
         e.pets = pets_depuis_le_disque(f.pets);
@@ -1056,6 +1086,7 @@ fn fusionner(ancienne: FicheEnregistree, mut neuve: FicheEnregistree) -> FicheEn
     }
     if neuve.equipement.is_empty() {
         neuve.equipement = ancienne.equipement;
+        neuve.equipement_lu_le = ancienne.equipement_lu_le;
     }
     if neuve.pets.is_empty() {
         neuve.pets = ancienne.pets;
@@ -1093,6 +1124,7 @@ pub fn enregistrer() {
             pv: e.pv,
             pm: e.pm,
             combat_power: e.combat_power,
+            equipement_lu_le: e.equipement_lu_le,
             equipement: e.equipement.clone(),
             pets: e
                 .pets

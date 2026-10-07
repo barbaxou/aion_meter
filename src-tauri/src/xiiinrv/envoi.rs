@@ -116,10 +116,22 @@ fn construire_contenu(jeton: &str, e: &Etat) -> Option<String> {
         "pv": e.pv,
         "pm": e.pm,
     });
+    // **Quand l'équipement a été lu**, et non quand il est envoyé.
+    //
+    // Le meter écoute le trafic, il ne demande rien au jeu : il ne peut pas
+    // aller chercher une fiche fraîche, il renvoie ce qu'il a entendu. Et comme
+    // le jeu n'envoie l'inventaire qu'une fois par connexion, la même photo
+    // repart à chaque fois.
+    //
+    // Sans cette date, le site n'horodatait que la **réception** et affichait
+    // « mis à jour il y a 4 min » sur un équipement vieux de huit heures.
+    // barbaxou l'a constaté le 07/10/2026 : ses pièces améliorées à +7 et +8
+    // n'apparaissaient pas, alors que la fiche se disait fraîche.
     serde_json::to_string(&serde_json::json!({
         "token": jeton,
         "personnage": personnage,
         "equipement": e.equipement,
+        "equipementLuLe": e.equipement_lu_le,
         "pets": e.pets,
     }))
     .ok()
