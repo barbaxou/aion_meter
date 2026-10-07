@@ -84,6 +84,13 @@ const MARQUES_FICHE: [&[u8]; 5] = [
 #[derive(Default)]
 struct Rejets {
     appareil: (u64, u64),
+    /// Les appareils écartés par le filtre d'appareil, nommés.
+    ///
+    /// Sans le nom, on sait qu'un filtre mange les paquets de fiche mais pas
+    /// lequel des deux appareils les porte. Le poste de barbaxou en a deux :
+    /// la carte physique et un tunnel local de réducteur de ping — le même
+    /// trafic peut arriver par l'un ou par l'autre.
+    appareils_ecartes: HashMap<String, (u64, u64)>,
     appareil_prefere: (u64, u64),
     port: (u64, u64),
     direction: (u64, u64),
@@ -98,6 +105,16 @@ impl Rejets {
         }
     }
 
+    fn noter_appareil(&mut self, nom: Option<&str>, data: &[u8]) {
+        Self::noter(&mut self.appareil, data);
+        let cle = nom.unwrap_or("(sans nom)").to_string();
+        let e = self.appareils_ecartes.entry(cle).or_insert((0, 0));
+        e.0 += 1;
+        if contains_any(data, &MARQUES_FICHE) {
+            e.1 += 1;
+        }
+    }
+
     fn bilan(&self) -> String {
         let p = |(t, m): (u64, u64)| format!("{t} ({m} avec marque)");
         format!(
@@ -108,6 +125,19 @@ impl Rejets {
             p(self.direction),
             p(self.signature)
         )
+    }
+
+    /// Le détail par appareil écarté, du plus marqué au moins marqué.
+    fn bilan_appareils(&self) -> String {
+        if self.appareils_ecartes.is_empty() {
+            return "aucun appareil écarté".to_string();
+        }
+        let mut v: Vec<(&String, &(u64, u64))> = self.appareils_ecartes.iter().collect();
+        v.sort_by_key(|(_, (_, marques))| std::cmp::Reverse(*marques));
+        v.iter()
+            .map(|(nom, (total, marques))| format!("{nom} : {total} ({marques} avec marque)"))
+            .collect::<Vec<_>>()
+            .join(" | ")
     }
 
     fn vider(&mut self) {
@@ -381,6 +411,11 @@ impl CaptureDispatcher {
                     crate::capture::stream_processor::diag_arrets::bilan_cibles()
                 );
                 info!("XIII NRV : {}", rejets.bilan());
+                info!(
+                    "XIII NRV : appareil verrouillé {:?} — écartés : {}",
+                    self.port_detector.current_device(),
+                    rejets.bilan_appareils()
+                );
                 compte_recues = 0;
                 compte_traitees = 0;
                 compte_octets = 0;
@@ -423,7 +458,7 @@ impl CaptureDispatcher {
             // Device filter
             if let Some(ref dev) = locked_device {
                 if !device_matches(dev, cap.device_name.as_deref()) {
-                    Rejets::noter(&mut rejets.appareil, &cap.data);
+                    rejets.noter_appareil(cap.device_name.as_deref(), &cap.data);
                     continue;
                 }
             }
