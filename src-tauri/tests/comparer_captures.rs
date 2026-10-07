@@ -111,6 +111,24 @@ struct Bilan {
     opcodes: HashMap<[u8; 2], usize>,
     plus_gros: usize,
     lignes: usize,
+    /// Les paquets par tranche de taille. Un paquet de jeu dépasse rarement
+    /// quelques milliers d'octets — l'inventaire en fait 5 675, les pets 4 094,
+    /// la fiche 2 529. Au-delà, c'est presque sûrement un faux paquet produit
+    /// par un découpage désaligné, qui en a avalé plusieurs vrais.
+    tailles: [usize; 6],
+    octets_par_tranche: [usize; 6],
+}
+
+/// La tranche de taille d'un paquet : <256, <1k, <4k, <8k, <32k, au-delà.
+fn tranche(n: usize) -> usize {
+    match n {
+        0..=255 => 0,
+        256..=1023 => 1,
+        1024..=4095 => 2,
+        4096..=8191 => 3,
+        8192..=32767 => 4,
+        _ => 5,
+    }
 }
 
 fn depouiller(chemin: &str, de: &str, a: &str) -> Bilan {
@@ -122,6 +140,8 @@ fn depouiller(chemin: &str, de: &str, a: &str) -> Bilan {
         opcodes: HashMap::new(),
         plus_gros: 0,
         lignes: 0,
+        tailles: [0; 6],
+        octets_par_tranche: [0; 6],
     };
 
     for ligne in texte.lines() {
@@ -159,6 +179,9 @@ fn depouiller(chemin: &str, de: &str, a: &str) -> Bilan {
             bilan.paquets += 1;
             bilan.octets += p.len();
             bilan.plus_gros = bilan.plus_gros.max(p.len());
+            let t = tranche(p.len());
+            bilan.tailles[t] += 1;
+            bilan.octets_par_tranche[t] += p.len();
             if let Some(op) = opcode(&p) {
                 *bilan.opcodes.entry(op).or_default() += 1;
             }
@@ -186,6 +209,21 @@ fn comparer_les_paquets_decompresses() {
             "  {nom} : {} lignes → {} paquets, {} octets, plus gros {}",
             bilan.lignes, bilan.paquets, bilan.octets, bilan.plus_gros
         );
+    }
+
+    const NOMS: [&str; 6] = ["<256", "<1k", "<4k", "<8k", "<32k", ">=32k"];
+    println!("
+  répartition des tailles de paquets (nombre / octets) :");
+    println!("           {}", NOMS.map(|n| format!("{n:>12}")).join(""));
+    for (nom, bilan) in [("A", &ba), ("B", &bb)] {
+        let n: String = bilan.tailles.iter().map(|v| format!("{v:>12}")).collect();
+        let o: String = bilan
+            .octets_par_tranche
+            .iter()
+            .map(|v| format!("{:>11}k", v / 1024))
+            .collect();
+        println!("  {nom} nb   {n}");
+        println!("  {nom} oct  {o}");
     }
 
     // Les opcodes présents d'un côté et pas de l'autre : c'est là que se loge
