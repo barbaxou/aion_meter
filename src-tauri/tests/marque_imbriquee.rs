@@ -24,7 +24,7 @@
 
 use std::collections::HashMap;
 
-use xiiinrv_meter_lib::capture::framing::{walk, FrameKind};
+use xiiinrv_meter_lib::capture::framing::{walk, walk_inner, FrameKind};
 use xiiinrv_meter_lib::capture::packet_accumulator::PacketAccumulator;
 
 const MARQUES: [([u8; 2], &str); 6] = [
@@ -46,6 +46,31 @@ fn decode_hex(hex: &str) -> Option<Vec<u8>> {
         .collect()
 }
 
+fn aplatir_interne(buffer: &[u8], out: &mut Vec<Vec<u8>>, profondeur: usize) {
+    if profondeur > 4 {
+        return;
+    }
+    for frame in walk_inner(buffer).frames {
+        match frame.kind {
+            FrameKind::Packet => out.push(frame.bytes(buffer).to_vec()),
+            FrameKind::Bundle => {
+                let payload = frame.payload(buffer);
+                if payload.len() < 7 {
+                    continue;
+                }
+                let taille =
+                    u32::from_le_bytes([payload[2], payload[3], payload[4], payload[5]]) as usize;
+                if taille == 0 || taille > 1_000_000 {
+                    continue;
+                }
+                if let Ok(interne) = lz4_flex::decompress(&payload[6..], taille) {
+                    aplatir_interne(&interne, out, profondeur + 1);
+                }
+            }
+        }
+    }
+}
+
 fn aplatir(buffer: &[u8], out: &mut Vec<Vec<u8>>, profondeur: usize) {
     if profondeur > 4 {
         return;
@@ -64,7 +89,11 @@ fn aplatir(buffer: &[u8], out: &mut Vec<Vec<u8>>, profondeur: usize) {
                     continue;
                 }
                 if let Ok(interne) = lz4_flex::decompress(&payload[6..], taille) {
-                    aplatir(&interne, out, profondeur + 1);
+                    // `walk_inner`, et non `walk` : c'est ce que fait le meter
+                    // pour le contenu décompressé. S'en écarter produisait de
+                    // gros blocs fusionnés et faisait croire, le 07/10/2026,
+                    // que nos paquets étaient dix fois trop gros.
+                    aplatir_interne(&interne, out, profondeur + 1);
                 }
             }
         }

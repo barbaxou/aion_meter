@@ -9,7 +9,7 @@
 //! Diagnostic only — run it deliberately:
 //!   A2_REPLAY_CAPTURE=... cargo test --test capture_contents -- --ignored --nocapture
 
-use xiiinrv_meter_lib::capture::framing::{walk, FrameKind};
+use xiiinrv_meter_lib::capture::framing::{walk, walk_inner, FrameKind};
 use xiiinrv_meter_lib::capture::packet_accumulator::PacketAccumulator;
 
 fn decode_hex(hex: &str) -> Option<Vec<u8>> {
@@ -27,6 +27,37 @@ fn decode_hex(hex: &str) -> Option<Vec<u8>> {
 }
 
 /// Pull every plain packet out of a buffer, decompressing bundles recursively.
+/// Le contenu **décompressé** se parcourt avec `walk_inner`, et non `walk`.
+///
+/// C'est ce que fait le meter (`stream_processor.rs`), et s'en écarter produit
+/// de gros blocs fusionnés : le 07/10/2026, un diagnostic qui employait `walk`
+/// des deux côtés annonçait nos paquets dix fois trop gros et faisait conclure
+/// à un défaut de découpage qui n'existait pas.
+fn flatten_inner(buffer: &[u8], out: &mut Vec<Vec<u8>>, depth: usize) {
+    if depth > 4 {
+        return;
+    }
+    for frame in walk_inner(buffer).frames {
+        match frame.kind {
+            FrameKind::Packet => out.push(frame.bytes(buffer).to_vec()),
+            FrameKind::Bundle => {
+                let payload = frame.payload(buffer);
+                if payload.len() < 7 {
+                    continue;
+                }
+                let size =
+                    u32::from_le_bytes([payload[2], payload[3], payload[4], payload[5]]) as usize;
+                if size == 0 || size > 1_000_000 {
+                    continue;
+                }
+                if let Ok(inner) = lz4_flex::decompress(&payload[6..], size) {
+                    flatten_inner(&inner, out, depth + 1);
+                }
+            }
+        }
+    }
+}
+
 fn flatten(buffer: &[u8], out: &mut Vec<Vec<u8>>, depth: usize) {
     if depth > 4 {
         return;
@@ -45,7 +76,7 @@ fn flatten(buffer: &[u8], out: &mut Vec<Vec<u8>>, depth: usize) {
                     continue;
                 }
                 if let Ok(inner) = lz4_flex::decompress(&payload[6..], size) {
-                    flatten(&inner, out, depth + 1);
+                    flatten_inner(&inner, out, depth + 1);
                 }
             }
         }
