@@ -94,6 +94,8 @@ fn what_is_in_a_capture() {
     // si plusieurs paquets arrivent ensemble — donc sur une même action — ou
     // séparément.
     let mut premier_vu: std::collections::HashMap<[u8; 2], String> = Default::default();
+    let mut toutes_les_heures: std::collections::HashMap<[u8; 2], Vec<String>> =
+        Default::default();
 
     for line in text.lines() {
         let line = line.trim();
@@ -142,6 +144,10 @@ fn what_is_in_a_capture() {
                     premier_vu
                         .entry([p[o], p[o + 1]])
                         .or_insert_with(|| parts[0].to_string());
+                    toutes_les_heures
+                        .entry([p[o], p[o + 1]])
+                        .or_default()
+                        .push(parts[0].to_string());
                 }
             }
             all_strings.extend(strings_in(p, 6));
@@ -181,6 +187,18 @@ fn what_is_in_a_capture() {
         let etat = if n == 0 { "ABSENT " } else { "présent" };
         let quand = premier_vu.get(&op).map(String::as_str).unwrap_or("-");
         println!("  {:02X} {:02X}  {etat}  {n:>6}  {quand:<34}  {quoi}", op[0], op[1]);
+        // Toutes les heures d'apparition, pas seulement la première : c'est ce
+        // qui permet de rattacher un paquet à une action du joueur, et surtout
+        // de constater qu'il **n'est pas** venu à un moment précis.
+        if let Some(heures) = toutes_les_heures.get(&op) {
+            if heures.len() > 1 {
+                let liste: Vec<&str> = heures
+                    .iter()
+                    .map(|h| &h[11..23.min(h.len())])
+                    .collect();
+                println!("            toutes : {}", liste.join("  "));
+            }
+        }
     }
 
     // Dedupe and show the longest strings — chat and mail would surface here.
