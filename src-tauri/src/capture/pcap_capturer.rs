@@ -630,7 +630,37 @@ fn parse_tcp_payload(frame: &[u8], link_type: c_int, device_name: &str) -> Optio
     if payload_offset >= frame.len() {
         return None;
     }
-    let payload = &frame[payload_offset..];
+
+    // **La charge utile s'arrête où IP le dit, pas où la trame finit.**
+    //
+    // Une trame Ethernet fait au minimum 60 octets : les petits paquets sont
+    // complétés par du remplissage, et ce remplissage n'est pas forcément à
+    // zéro — c'est souvent le contenu résiduel du tampon de la carte. Prendre
+    // la trame jusqu'au bout insérait donc ces octets dans le flux TCP.
+    //
+    // Mesuré le 07/10/2026 en comparant notre capture à celle d'un meter tiers,
+    // sur la même machine et la même fenêtre : les deux flux sont identiques
+    // jusqu'à l'octet 8 720, où six octets `c7 33 cd e2 68 19` apparaissent
+    // chez nous seulement — et la suite de son flux reprend chez nous six
+    // octets plus loin. Une insertion, pas un décalage.
+    //
+    // Six octets parasites suffisent à faire dérailler tout le découpage
+    // derrière : la longueur suivante est lue à côté, le paquet avale ses
+    // voisins. Sur trois minutes, nous rendions 1 073 paquets là où il en
+    // rendait 8 570, et les deux tiers de nos octets étaient prisonniers de
+    // onze gros blocs jamais lus au-delà de leur premier opcode.
+    let ip_total_len = u16::from_be_bytes([ip_header[2], ip_header[3]]) as usize;
+    let fin_utile = if ip_total_len >= ip_header_len + tcp_header_len {
+        (ip_offset + ip_total_len).min(frame.len())
+    } else {
+        // Longueur IP incohérente : mieux vaut la trame entière que rien, le
+        // découpage se débrouillera comme avant.
+        frame.len()
+    };
+    if fin_utile <= payload_offset {
+        return None;
+    }
+    let payload = &frame[payload_offset..fin_utile];
     if payload.is_empty() {
         return None;
     }
@@ -667,6 +697,43 @@ mod tests {
         assert_eq!((p.src_port, p.dst_port), (51000, 13328), "link type {link_type}");
         assert_eq!(p.dst_ip.as_deref(), Some("193.202.112.99"));
         assert_eq!(p.data, b"hi");
+    }
+
+    /// Le remplissage d'une trame Ethernet ne doit pas entrer dans le flux.
+    ///
+    /// Une trame fait au minimum 60 octets : un petit paquet est complété, et
+    /// ce complément n'est pas forcément à zéro — c'est souvent le contenu
+    /// résiduel du tampon de la carte. On prenait la trame jusqu'au bout, donc
+    /// on insérait ces octets dans le flux TCP.
+    ///
+    /// Constaté le 07/10/2026 en comparant notre capture à celle d'un meter
+    /// tiers sur la même machine et la même fenêtre : flux identiques jusqu'à
+    /// l'octet 8 720, puis six octets chez nous seulement, et sa suite qui
+    /// reprend six octets plus loin. Une insertion.
+    ///
+    /// Six octets suffisent à faire dérailler le découpage derrière : sur trois
+    /// minutes nous rendions 1 073 paquets là où il en rendait 8 570, et les
+    /// deux tiers de nos octets dormaient dans onze blocs jamais lus au-delà de
+    /// leur premier opcode. C'est la cause de l'équipement manquant, des
+    /// statistiques jamais vues et, très probablement, du déficit de dégâts en
+    /// groupe.
+    #[test]
+    fn le_remplissage_ethernet_nentre_pas_dans_le_flux() {
+        let ether = [[0u8; 12].as_slice(), &[0x08, 0x00]].concat();
+        let utile = [ether.as_slice(), &ipv4_tcp()].concat();
+
+        // La même trame, complétée comme le fait une carte réseau.
+        let bourrage = [0xC7u8, 0x33, 0xCD, 0xE2, 0x68, 0x19];
+        let remplie = [utile.as_slice(), &bourrage].concat();
+
+        let sans = parse_tcp_payload(&utile, 1, "dev").expect("trame lisible");
+        assert_eq!(sans.data, b"hi", "témoin : sans remplissage, la charge est intacte");
+
+        let avec = parse_tcp_payload(&remplie, 1, "dev").expect("trame lisible");
+        assert_eq!(
+            avec.data, b"hi",
+            "le remplissage doit être écarté ; l'inclure insère des octets              parasites dans le flux et fait dérailler tout le découpage"
+        );
     }
 
     #[test]
