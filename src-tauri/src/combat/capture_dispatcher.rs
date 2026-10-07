@@ -69,6 +69,52 @@ const MARQUES_FICHE: [&[u8]; 5] = [
 /// reste du meter, et qu'elle ne devait pas rester invérifiable au fond d'une
 /// boucle asynchrone. Garder n'est pas verrouiller : le verrou, lui, continue
 /// de ne compter que les vraies signatures de combat.
+/// Ce que chaque filtre écarte, et combien de ces rejets portaient une marque
+/// de fiche.
+///
+/// Le 07/10/2026, `11 56` (l'inventaire) et `49 36` (les statistiques)
+/// n'atteignaient jamais notre capture, alors qu'un meter tiers les recevait
+/// sur la même connexion au même instant. Tous les autres opcodes passaient.
+/// La perte est donc dans ces filtres — mais ils voient des morceaux TCP, pas
+/// des opcodes, et aucun compteur ne disait lequel mangeait quoi.
+///
+/// La marque dans un morceau ne prouve rien à elle seule : deux octets se
+/// rencontrent par hasard, l'erreur a été commise plusieurs fois. C'est le
+/// **déséquilibre entre filtres** qui renseigne, pas le compte absolu.
+#[derive(Default)]
+struct Rejets {
+    appareil: (u64, u64),
+    appareil_prefere: (u64, u64),
+    port: (u64, u64),
+    direction: (u64, u64),
+    signature: (u64, u64),
+}
+
+impl Rejets {
+    fn noter(compteur: &mut (u64, u64), data: &[u8]) {
+        compteur.0 += 1;
+        if contains_any(data, &MARQUES_FICHE) {
+            compteur.1 += 1;
+        }
+    }
+
+    fn bilan(&self) -> String {
+        let p = |(t, m): (u64, u64)| format!("{t} ({m} avec marque)");
+        format!(
+            "rejets — appareil {} | appareil préféré {} | port {} | direction {} | signature {}",
+            p(self.appareil),
+            p(self.appareil_prefere),
+            p(self.port),
+            p(self.direction),
+            p(self.signature)
+        )
+    }
+
+    fn vider(&mut self) {
+        *self = Self::default();
+    }
+}
+
 fn garder_avant_verrou(data: &[u8]) -> bool {
     contains_any(data, &COMBAT_SIGNATURES) || contains_any(data, &MARQUES_FICHE)
 }
@@ -259,6 +305,7 @@ impl CaptureDispatcher {
         let mut compte_recues: u64 = 0;
         let mut compte_traitees: u64 = 0;
         let mut compte_octets: u64 = 0;
+        let mut rejets = Rejets::default();
         let mut dernier_bilan_ms = now_ms();
 
         while let Some(cap) = receiver.recv().await {
@@ -333,9 +380,11 @@ impl CaptureDispatcher {
                     "XIII NRV : {}",
                     crate::capture::stream_processor::diag_arrets::bilan_cibles()
                 );
+                info!("XIII NRV : {}", rejets.bilan());
                 compte_recues = 0;
                 compte_traitees = 0;
                 compte_octets = 0;
+                rejets.vider();
                 dernier_bilan_ms = now;
             }
 
@@ -374,6 +423,7 @@ impl CaptureDispatcher {
             // Device filter
             if let Some(ref dev) = locked_device {
                 if !device_matches(dev, cap.device_name.as_deref()) {
+                    Rejets::noter(&mut rejets.appareil, &cap.data);
                     continue;
                 }
             }
@@ -382,6 +432,7 @@ impl CaptureDispatcher {
             if current_port.is_none() {
                 if let Some(ref pref) = self.port_detector.preferred_device() {
                     if !device_matches(pref, cap.device_name.as_deref()) {
+                        Rejets::noter(&mut rejets.appareil_prefere, &cap.data);
                         continue;
                     }
                 }
@@ -448,6 +499,7 @@ impl CaptureDispatcher {
             // Port filter
             if let Some(port) = current_port {
                 if cap.src_port != port && cap.dst_port != port {
+                    Rejets::noter(&mut rejets.port, &cap.data);
                     continue;
                 }
             }
@@ -466,6 +518,7 @@ impl CaptureDispatcher {
             // Only parse server->client (src == locked port)
             if let Some(port) = current_port {
                 if cap.src_port != port {
+                    Rejets::noter(&mut rejets.direction, &cap.data);
                     continue;
                 }
             }
@@ -483,6 +536,7 @@ impl CaptureDispatcher {
             // compte pas pour autant dans la cadence qui décide du verrou.
             let porte_signature = contains_any(&cap.data, &COMBAT_SIGNATURES);
             if unlocked && !garder_avant_verrou(&cap.data) {
+                Rejets::noter(&mut rejets.signature, &cap.data);
                 continue;
             }
 
@@ -708,6 +762,36 @@ mod tests {
             !relacher_le_verrou(port, &cadences, t),
             "témoin : la cadence de l'autre flux doit être récente"
         );
+    }
+
+    /// Le compteur de rejets doit distinguer un morceau porteur d'une marque
+    /// de fiche d'un morceau quelconque.
+    ///
+    /// C'est tout ce qu'on lui demande, et c'est ce dont on a besoin : les
+    /// filtres voient des morceaux TCP, pas des opcodes, et seul le
+    /// déséquilibre entre filtres dira lequel mange l'inventaire. Un compteur
+    /// qui ne compterait pas ce qu'il annonce rendrait la mesure trompeuse —
+    /// l'erreur a été commise quatre fois le 07/10/2026, toujours sur des
+    /// outils de mesure et jamais sur le produit.
+    #[test]
+    fn le_compteur_de_rejets_repere_les_marques_de_fiche() {
+        let mut r = Rejets::default();
+        let inventaire = [0x16u8, 0x11, 0x56, 0x01, 0x02];
+        let quelconque = [0x17u8, 0x03, 0x01, 0x42, 0x42];
+
+        Rejets::noter(&mut r.port, &inventaire);
+        Rejets::noter(&mut r.port, &quelconque);
+        Rejets::noter(&mut r.direction, &quelconque);
+
+        assert_eq!(r.port, (2, 1), "deux rejets sur le port, dont un porteur d'une marque");
+        assert_eq!(r.direction, (1, 0), "un rejet sur la direction, sans marque");
+        assert_eq!(r.appareil, (0, 0), "témoin : un filtre qui n'a rien écarté reste à zéro");
+
+        let ligne = r.bilan();
+        assert!(ligne.contains("port 2 (1 avec marque)"), "le bilan doit être lisible : {ligne}");
+
+        r.vider();
+        assert_eq!(r.port, (0, 0), "le bilan se remet à zéro à chaque période");
     }
 
     #[test]
