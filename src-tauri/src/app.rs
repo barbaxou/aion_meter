@@ -440,9 +440,22 @@ fn get_available_devices() -> Vec<String> {
     }
 }
 
+/// Le périphérique de capture choisi à la main, conservé entre deux lancements.
+///
+/// Il ne l'était pas, et le choix retombait sur « détection auto » à chaque
+/// démarrage — constaté le 07/10/2026 : barbaxou a sélectionné son adaptateur
+/// de loopback et le meter est revenu seul à sa carte physique.
+///
+/// Cela compte au-delà du confort : sur un poste équipé d'un réducteur de ping,
+/// le trafic du jeu passe par un tunnel local, et c'est ce tunnel que le client
+/// consomme réellement. Un membre dans ce cas doit pouvoir imposer son choix
+/// une fois pour toutes.
+const CLE_APPAREIL: &str = "dpsMeter.captureDevice";
+
 #[tauri::command]
 fn set_manual_device(state: tauri::State<'_, AppState>, device: String) {
     let dev = if device.trim().is_empty() { None } else { Some(device) };
+    state.settings.set(CLE_APPAREIL, dev.as_deref().unwrap_or(""));
     state.port_detector.set_preferred_device(dev);
 }
 
@@ -1680,6 +1693,14 @@ pub fn run() {
             }
             if settings.get("dpsMeter.saveRawPackets").as_deref() == Some("true") {
                 logging::logger::set_packet_log_enabled(true, &app_data_dir);
+            }
+            // Le périphérique choisi à la main, s'il y en a un. Posé avant tout
+            // verrouillage : le filtre d'appareil préféré ne joue que tant que
+            // le port n'est pas verrouillé, donc le relire plus tard ne
+            // servirait à rien.
+            if let Some(appareil) = settings.get(CLE_APPAREIL).filter(|d| !d.trim().is_empty()) {
+                tracing::info!("XIII NRV : périphérique de capture imposé — {}", appareil);
+                port_detector.set_preferred_device(Some(appareil));
             }
 
             let state = AppState {
