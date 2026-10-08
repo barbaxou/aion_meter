@@ -25,6 +25,11 @@ pub struct PersonalData {
     /// damage is actually healing/buffs »), et rien ne permet aujourd'hui de les
     /// séparer.
     pub heal: i64,
+    /// Ajout XIII NRV : combien de fois ce joueur est tombé pendant le combat
+    /// en cours. Compté par `DataStorage`, qui ne retient une nouvelle mort
+    /// qu'après avoir vu l'entité frapper à nouveau.
+    #[serde(default)]
+    pub deaths: u32,
     /// Renders this player's name gold. Resolved locally against a roster the
     /// meter downloads — see `crate::supporters`; nothing about your party is
     /// ever sent anywhere to work this out.
@@ -47,6 +52,7 @@ impl PersonalData {
             nickname,
             combat_power: 0,
             heal: 0,
+            deaths: 0,
             is_supporter: false,
         }
     }
@@ -61,6 +67,7 @@ impl PersonalData {
             nickname,
             combat_power: 0,
             heal: 0,
+            deaths: 0,
             is_supporter: false,
         }
     }

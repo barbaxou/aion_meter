@@ -214,6 +214,17 @@ pub struct DataStorage {
     /// Set when a zone change clears combat; the dps calculator consumes it to
     /// drop its cached snapshot / saved-target state on the next cycle.
     combat_reset_requested: AtomicBool,
+    /// Ajout XIII NRV : une remise à zéro automatique **en attente**.
+    ///
+    /// Changement de zone et fin de groupe effaçaient le combat sur-le-champ,
+    /// donc l'overlay se vidait à la fin du combat sans qu'on ait eu le temps
+    /// de le lire. Mesuré le 08/10/2026 dans le journal : cinq changements de
+    /// zone pendant un seul donjon, entre les salles.
+    ///
+    /// Elles posent maintenant ce drapeau, et l'effacement n'a lieu qu'au
+    /// **prochain coup porté** — c'est-à-dire quand on engage une nouvelle
+    /// cible. Le bouton de remise à zéro, lui, agit toujours immédiatement.
+    flush_en_attente: AtomicBool,
 }
 
 struct Inner {
@@ -233,6 +244,16 @@ struct Inner {
     mob_hp_data: HashMap<i32, i32>,
     /// Live CURRENT HP per entity, from the in-place `8D <id> 02 01 00 <u32>` feed.
     mob_current_hp: HashMap<i32, i32>,
+    /// Ajout XIII NRV : pour chaque entité, la dernière lecture de PV et le
+    /// total de dégâts que nous avions comptés à cet instant.
+    ///
+    /// Le jeu n'envoie les PV courants que de loin en loin, alors que
+    /// l'overlay se rafraîchit toutes les 100 ms : la barre de vie descendait
+    /// donc par paliers, là où un meter tiers la fait descendre sans à-coup.
+    /// Ce point d'ancrage permet de combler l'intervalle avec nos propres
+    /// coups, et chaque nouvelle lecture le recale — l'écart ne s'accumule
+    /// pas.
+    mob_hp_ancre: HashMap<i32, (i32, i64)>,
     known_player_ids: HashSet<i32>,
     /// Ids whose nickname came from an authoritative source (a 45/44 36 player
     /// spawn or the account char-list). Lower-confidence parsers may not steal
@@ -272,6 +293,23 @@ struct Inner {
     actor_power_scalars: HashMap<i32, HashSet<i32>>,
     hostile_target_ids: HashSet<i32>,
     dead_entity_ids: HashSet<i32>,
+    /// Ajout XIII NRV : combien de fois chaque entité est tombée au combat.
+    ///
+    /// `dead_entity_ids` ne dit que « morte ou non » : un ensemble ne compte
+    /// pas. Or un joueur relevé peut retomber, et c'est ce total qui intéresse
+    /// le groupe — un meter tiers l'affiche à côté du pseudo, et barbaxou l'a
+    /// demandé le 07/10/2026.
+    ///
+    /// La marque de mort est levée dès que l'entité porte un coup direct : un
+    /// mort ne frappe pas. C'est ce qui permet de compter la mort suivante
+    /// sans compter deux fois la même — un paquet de mort répété retrouve
+    /// l'entité déjà marquée et ne compte pas.
+    morts_par_entite: HashMap<i32, u32>,
+    /// La dernière lecture de PV de chaque entité, pour repérer la chute à zéro.
+    pv_precedents: HashMap<i32, i32>,
+    /// Les entités dont on a vu les PV tomber à zéro une fois, et qui attendent
+    /// une seconde lecture pour que la mort compte.
+    zero_en_attente: HashSet<i32>,
     /// Boss entity IDs identified from NPC DB boss flags
     boss_entity_ids: HashSet<i32>,
     /// Training dummies (scarecrows, punching bags) among the entities spawned,
@@ -333,6 +371,7 @@ impl DataStorage {
                 heal_storage: HashMap::new(),
                 mob_hp_data: HashMap::new(),
                 mob_current_hp: HashMap::new(),
+                mob_hp_ancre: HashMap::new(),
                 known_player_ids: HashSet::new(),
                 authoritative_name_ids: HashSet::new(),
                 confirmed_summon_ids: HashSet::new(),
@@ -345,6 +384,9 @@ impl DataStorage {
                 actor_power_scalars: HashMap::new(),
                 hostile_target_ids: HashSet::new(),
                 dead_entity_ids: HashSet::new(),
+                morts_par_entite: HashMap::new(),
+                pv_precedents: HashMap::new(),
+                zero_en_attente: HashSet::new(),
                 boss_entity_ids: HashSet::new(),
                 training_dummy_ids: HashSet::new(),
                 held_dot_ticks: HashMap::new(),
@@ -360,6 +402,7 @@ impl DataStorage {
             last_damage_ms: AtomicI64::new(0),
             last_zone_reset_ms: AtomicI64::new(0),
             combat_reset_requested: AtomicBool::new(false),
+            flush_en_attente: AtomicBool::new(false),
         }
     }
 
@@ -386,9 +429,8 @@ impl DataStorage {
         // keeps everyone's entity ids, so wiping nicknames/known-players/summons
         // would drop your party (and you) to raw ids until they happen to be
         // re-broadcast. Clear only the per-segment damage aggregates.
-        self.flush_combat_only();
-        self.combat_reset_requested.store(true, Ordering::Relaxed);
-        tracing::info!("Zone change detected — combat data reset (identity preserved)");
+        self.flush_en_attente.store(true, Ordering::Relaxed);
+        tracing::info!("Zone change detected — combat data reset armed (applies on the next hit)");
         true
     }
 
@@ -497,6 +539,14 @@ impl DataStorage {
     }
 
     pub fn append_damage(&self, pdp: ParsedDamagePacket) {
+        // Une remise à zéro automatique armée plus tôt s'applique ici : au
+        // premier coup porté après le changement de zone ou la fin du groupe.
+        // Jusque-là l'overlay garde le combat précédent, lisible.
+        if self.flush_en_attente.swap(false, Ordering::Relaxed) {
+            self.flush_combat_only();
+            self.combat_reset_requested.store(true, Ordering::Relaxed);
+            tracing::info!("Remise à zéro armée appliquée : nouvelle cible engagée");
+        }
         let mut inner = self.inner.write();
         let skill_code = pdp.skill_code();
         let actor_id = pdp.actor_id();
@@ -629,6 +679,9 @@ impl DataStorage {
             inner.target_combat.clear();
             inner.held_dot_ticks.clear();
             inner.dead_entity_ids.clear();
+            inner.morts_par_entite.clear();
+        inner.pv_precedents.clear();
+        inner.zero_en_attente.clear();
             inner.has_boss_in_segment = true;
         } else if is_boss_target {
             inner.has_boss_in_segment = true;
@@ -680,6 +733,33 @@ impl DataStorage {
 
     pub fn mark_entity_dead(&self, entity_id: i32) {
         self.inner.write().dead_entity_ids.insert(entity_id);
+    }
+
+    /// Une lecture de PV, pour compter les morts des joueurs.
+    ///
+    /// Le paquet de mort (`41 36` / `42 36`) ne sert à rien ici : rejeu d'une
+    /// capture réelle du 07/10/2026, 620 entités y sont marquées mortes et
+    /// **aucune ne porte un pseudo**, sous aucun des huit drapeaux observés.
+    /// C'est un flux de monstres.
+    ///
+    /// Les PV des joueurs, eux, passent bien dans le flux `8D` : 401 lectures
+    /// pour un membre du groupe, maximum 22 363 PV, et quatre chutes à zéro.
+    /// Une mort est donc une chute de « strictement positif » à zéro, et la
+    /// résurrection se lit toute seule quand les PV remontent.
+    pub fn noter_pv_dentite(&self, entity_id: i32, pv: i32) {
+        if pv < 0 {
+            return;
+        }
+        let mut inner = self.inner.write();
+        let avant = inner.pv_precedents.insert(entity_id, pv);
+        if pv == 0 && avant.is_some_and(|p| p > 0) {
+            *inner.morts_par_entite.entry(entity_id).or_insert(0) += 1;
+        }
+    }
+
+    /// Combien de fois cette entité est tombée depuis la dernière remise à zéro.
+    pub fn morts(&self, entity_id: i32) -> u32 {
+        self.inner.read().morts_par_entite.get(&entity_id).copied().unwrap_or(0)
     }
 
     pub fn is_entity_dead(&self, entity_id: i32) -> bool {
@@ -777,7 +857,7 @@ impl DataStorage {
                 !n.trim().is_empty() && !members.iter().any(|(name, _)| name.trim() == n.trim())
             });
 
-        if was_in_party && (now_alone || dropped_self) {
+        if was_in_party && now_alone {
             tracing::info!(
                 "Party ended ({} -> {} members) — clearing party rows",
                 inner.party_members.len(),
@@ -786,9 +866,22 @@ impl DataStorage {
             inner.party_members.clear();
             inner.current_dungeon_id = 0;
             drop(inner);
-            self.flush_combat_only();
-            self.combat_reset_requested.store(true, Ordering::Relaxed);
+            self.flush_en_attente.store(true, Ordering::Relaxed);
             return;
+        }
+
+        // Absent d'un effectif complet qui compte pourtant plusieurs membres :
+        // on ne déclare **pas** le groupe fini. Mesuré le 08/10/2026 : ce seul
+        // critère a tiré 79 fois en dix secondes, sur des effectifs « 5 → 5 »
+        // et même « 4 → 5 », en effaçant le combat à chaque fois. Le nom local
+        // ne correspondait à aucune ligne de l'effectif, pour une raison qui
+        // reste à trouver — mais un groupe de cinq n'est pas un groupe fini,
+        // quelle qu'en soit la raison.
+        if was_in_party && dropped_self {
+            tracing::debug!(
+                "Absent de l'effectif ({} membres) — effectif conservé, pas de remise à zéro",
+                members.len()
+            );
         }
 
         if complete {
@@ -997,7 +1090,47 @@ impl DataStorage {
             return;
         }
         let mut inner = self.inner.write();
+
+        // Ajout XIII NRV : des PV qui remontent à plein, c'est une nouvelle
+        // tentative.
+        //
+        // Mesuré le 08/10/2026 sur « Désir de Kromede » : le groupe tombe à
+        // 65 % des PV du boss, meurt, et à 16:02:54 la lecture repasse d'un
+        // coup à 100 %. Les deux tentatives s'additionnaient — le combat
+        // enregistré annonce 21 159 960 dégâts pour un boss de 15 504 000 PV,
+        // soit **136 %**, sur 454 secondes.
+        //
+        // Rien ne les séparait : l'entité garde le même identifiant d'une
+        // tentative à l'autre, il n'y a pas de changement de zone, et les
+        // coups ne s'arrêtent jamais assez longtemps pour que la remise à zéro
+        // par inactivité (30 s) agisse — invocations et dégâts sur la durée
+        // continuent de tomber pendant que le groupe revient.
+        //
+        // Le seuil est volontairement serré : il faut être descendu sous 90 %
+        // et remonter au-dessus de 98 %. Un soin de phase n'y suffit pas, et
+        // une première lecture non plus, faute de valeur précédente.
+        let max_connu = inner.mob_hp_data.get(&id).copied().unwrap_or(0);
+        // La lecture précédente **de cette fonction** : se reposer sur
+        // `pv_precedents`, que seule `noter_pv_dentite` remplit, créait une
+        // dépendance invisible entre deux chemins. Celle-ci est à nous.
+        let precedent = inner.mob_current_hp.get(&id).copied();
+        let recommence = max_connu > 0
+            && precedent.is_some_and(|p| (p as i64) * 100 < (max_connu as i64) * 90)
+            && (hp as i64) * 100 >= (max_connu as i64) * 98;
+        if recommence {
+            tracing::info!(
+                "Nouvelle tentative : les PV de l'entité {id} repassent à {hp}                  (maximum connu {max_connu}) — le combat précédent est effacé"
+            );
+            inner.target_combat.remove(&id);
+            inner.mob_hp_ancre.remove(&id);
+            // Les morts comptées appartenaient à la tentative précédente.
+            inner.morts_par_entite.clear();
+        }
+
         inner.mob_current_hp.insert(id, hp);
+        // Le point d'ancrage : ces PV-là valaient pour ce total de dégâts-là.
+        let degats = inner.target_combat.get(&id).map(|t| t.total_damage).unwrap_or(0);
+        inner.mob_hp_ancre.insert(id, (hp, degats));
         let max = inner.mob_hp_data.entry(id).or_insert(0);
         if hp > *max {
             *max = hp;
@@ -1006,6 +1139,19 @@ impl DataStorage {
 
     pub fn get_mob_current_hp(&self, id: i32) -> Option<i32> {
         self.inner.read().mob_current_hp.get(&id).copied()
+    }
+
+    /// Les PV courants, comblés entre deux lectures par les coups que nous
+    /// avons comptés depuis la dernière.
+    ///
+    /// Sert **uniquement** à l'affichage de la barre : le taux de lecture, lui,
+    /// doit continuer de se calculer sur la lecture brute du jeu, sinon il se
+    /// mesurerait sur nos propres chiffres et dirait toujours 100 %.
+    pub fn pv_lisses(&self, id: i32) -> Option<i64> {
+        let inner = self.inner.read();
+        let (pv, degats_a_l_ancre) = inner.mob_hp_ancre.get(&id).copied()?;
+        let degats = inner.target_combat.get(&id).map(|t| t.total_damage).unwrap_or(0);
+        Some((pv as i64 - (degats - degats_a_l_ancre).max(0)).max(0))
     }
 
     /// Record a heal tick done by `actor_id` with `skill_code` (is_hot marks a HoT).
@@ -1111,9 +1257,13 @@ impl DataStorage {
         inner.actor_power_scalars.clear();
         inner.hostile_target_ids.clear();
         inner.dead_entity_ids.clear();
+        inner.morts_par_entite.clear();
+        inner.pv_precedents.clear();
+        inner.zero_en_attente.clear();
         inner.has_boss_in_segment = false;
         inner.mob_hp_data.clear();
         inner.mob_current_hp.clear();
+        inner.mob_hp_ancre.clear();
         inner.heal_storage.clear();
         inner.current_target = 0;
     }
@@ -1128,9 +1278,13 @@ impl DataStorage {
         inner.held_dot_ticks.clear();
         inner.hostile_target_ids.clear();
         inner.dead_entity_ids.clear();
+        inner.morts_par_entite.clear();
+        inner.pv_precedents.clear();
+        inner.zero_en_attente.clear();
         inner.has_boss_in_segment = false;
         inner.mob_hp_data.clear();
         inner.mob_current_hp.clear();
+        inner.mob_hp_ancre.clear();
         inner.heal_storage.clear();
         inner.current_target = 0;
     }
@@ -1467,7 +1621,140 @@ mod tests {
         assert_eq!(s.get_party_members().len(), 2, "the roster itself is kept, for combat power");
     }
 
-    fn hit(actor: i32, target: i32, at: i64, damage: i32, dot: bool) -> ParsedDamagePacket {
+    /// Entre deux lectures de PV, la barre avance avec nos propres coups.
+    ///
+    /// Le jeu n'envoie les PV courants que de loin en loin, alors que
+    /// l'overlay se rafraîchit toutes les 100 ms : barbaxou a vu, le
+    /// 07/10/2026, notre barre descendre par paliers quand celle d'un meter
+    /// tiers descendait sans à-coup.
+    ///
+    /// Chaque lecture recale le point d'ancrage, donc l'écart entre ce que
+    /// nous comptons et la vérité du jeu ne s'accumule jamais.
+    ///
+    /// Sans le lissage, `pv_lisses` rendrait 3 000 000 aux trois appels.
+    #[test]
+    fn entre_deux_lectures_la_barre_avance_avec_nos_coups() {
+        let s = DataStorage::new();
+        assert_eq!(s.pv_lisses(77), None, "aucune lecture : rien à combler");
+
+        // Le jeu annonce 3 000 000 PV alors que nous avions compté 0 dégât.
+        s.set_mob_current_hp(77, 3_000_000);
+        assert_eq!(s.pv_lisses(77), Some(3_000_000));
+
+        // Deux coups tombent, sans nouvelle lecture du jeu.
+        s.append_damage(hit(10, 77, 1_000, 400_000, false));
+        assert_eq!(s.pv_lisses(77), Some(2_600_000), "la barre doit avoir bougé");
+        s.append_damage(hit(10, 77, 1_100, 100_000, false));
+        assert_eq!(s.pv_lisses(77), Some(2_500_000));
+
+        // La lecture brute, elle, n'a pas bougé : c'est elle que le taux de
+        // lecture compare à nos chiffres.
+        assert_eq!(s.get_mob_current_hp(77), Some(3_000_000));
+
+        // Le jeu reparle : il dit 2 400 000, donc 100 000 nous avaient échappé.
+        // Le point d'ancrage se recale, et l'écart ne se reporte pas.
+        s.set_mob_current_hp(77, 2_400_000);
+        assert_eq!(s.pv_lisses(77), Some(2_400_000));
+        s.append_damage(hit(10, 77, 1_200, 200_000, false));
+        assert_eq!(s.pv_lisses(77), Some(2_200_000));
+    }
+
+    /// Un effectif complet de cinq membres n'est pas un groupe fini.
+    ///
+    /// Mesuré dans le journal du 08/10/2026 : « Party ended (5 -> 5 members) »
+    /// 79 fois en dix secondes, et « (4 -> 5 members) » aussi. Chaque passage
+    /// effaçait le combat. La cause : le seul fait que le nom local ne figure
+    /// dans aucune ligne de l'effectif suffisait à déclarer le groupe fini.
+    ///
+    /// Sans la correction, la première assertion échoue : le combat est effacé
+    /// et l'effectif vidé alors que les cinq membres sont là.
+    #[test]
+    fn un_effectif_complet_de_cinq_nest_pas_un_groupe_fini() {
+        let s = DataStorage::new();
+        s.set_local_character_name(Some("Barbaxou".into()));
+        let cinq = |noms: &[&str]| -> Vec<(String, PartyMember)> {
+            noms.iter()
+                .enumerate()
+                .map(|(i, n)| {
+                    (n.to_string(), PartyMember { slot: i as u8, level: 45, ..Default::default() })
+                })
+                .collect()
+        };
+
+        // Un groupe de cinq s'installe, et du combat s'accumule.
+        s.set_party_roster(cinq(&["Athalya", "Smolwoll", "Vampany", "Barbax", "TankYouNext"]), true);
+        s.append_damage(hit(1085, 900, 1_000, 500_000, false));
+        assert_eq!(s.get_party_members().len(), 5);
+
+        // Le même effectif revient, toujours sans le nom local. Rien ne doit
+        // bouger : ni l'effectif, ni le combat.
+        s.set_party_roster(cinq(&["Athalya", "Smolwoll", "Vampany", "Barbax", "TankYouNext"]), true);
+        assert_eq!(
+            s.get_party_members().len(),
+            5,
+            "cinq membres présents : le groupe n'est pas fini"
+        );
+        s.append_damage(hit(1085, 900, 1_100, 100_000, false));
+        let (total, _) = totals(&s, 900);
+        assert_eq!(total, 600_000, "le combat ne doit pas avoir été effacé");
+
+        // En revanche, rester seul met bien fin au groupe — mais l'effacement
+        // attend le prochain coup, pour laisser lire le combat précédent.
+        s.set_party_roster(cinq(&["Barbaxou"]), true);
+        assert!(s.get_party_members().is_empty(), "seul : le groupe est fini");
+        let (total, _) = totals(&s, 900);
+        assert_eq!(total, 600_000, "le combat reste lisible jusqu'au coup suivant");
+        s.append_damage(hit(1085, 901, 2_000, 7_000, false));
+        assert!(
+            s.get_combat_snapshot().get(&900).is_none(),
+            "la cible précédente doit avoir été effacée au coup suivant"
+        );
+    }
+
+    /// Une mort, c'est des PV qui tombent à zéro — pas un paquet de mort.
+    ///
+    /// Première version : compter les paquets `41 36` / `42 36` de drapeau 3.
+    /// Le rejeu d'une capture réelle du 07/10/2026 l'a réfutée — 620 entités y
+    /// sont marquées mortes et **aucune ne porte un pseudo**, sous aucun des
+    /// huit drapeaux observés. C'est un flux de monstres, et le compteur
+    /// n'aurait jamais rien affiché.
+    ///
+    /// Les PV des joueurs passent, eux, dans le flux `8D` : 401 lectures pour
+    /// un membre du groupe, maximum 22 363 PV, quatre chutes à zéro. D'où cette
+    /// règle, qui lit la résurrection toute seule : les PV remontent.
+    #[test]
+    fn une_mort_cest_des_pv_qui_tombent_a_zero() {
+        let s = DataStorage::new();
+        assert_eq!(s.morts(4242), 0, "personne n'est mort au départ");
+
+        // Première lecture : on ne sait pas d'où il vient, donc rien à compter.
+        s.noter_pv_dentite(4242, 0);
+        assert_eq!(s.morts(4242), 0, "une entité vue déjà à zéro n'est pas une mort");
+
+        // Il se relève et encaisse.
+        s.noter_pv_dentite(4242, 19_780);
+        s.noter_pv_dentite(4242, 8_300);
+        assert_eq!(s.morts(4242), 0);
+
+        // Il tombe.
+        s.noter_pv_dentite(4242, 0);
+        assert_eq!(s.morts(4242), 1);
+
+        // Le jeu répète la lecture à zéro : ce n'est pas une seconde mort.
+        s.noter_pv_dentite(4242, 0);
+        s.noter_pv_dentite(4242, 0);
+        assert_eq!(s.morts(4242), 1, "zéro répété ne compte qu'une fois");
+
+        // Relevé, puis retombé : deux morts.
+        s.noter_pv_dentite(4242, 19_780);
+        s.noter_pv_dentite(4242, 0);
+        assert_eq!(s.morts(4242), 2);
+
+        // Et le voisin n'a pas bougé.
+        assert_eq!(s.morts(4243), 0);
+    }
+
+    pub(super) fn hit(actor: i32, target: i32, at: i64, damage: i32, dot: bool) -> ParsedDamagePacket {
         let mut p = ParsedDamagePacket::new();
         p.set_actor_id(actor);
         p.set_target_id(target);
@@ -1478,7 +1765,7 @@ mod tests {
         p
     }
 
-    fn totals(s: &DataStorage, target: i32) -> (i64, i64) {
+    pub(super) fn totals(s: &DataStorage, target: i32) -> (i64, i64) {
         let snap = s.get_combat_snapshot();
         let t = &snap[&target];
         (t.total_damage, t.last_damage_time - t.first_damage_time)
@@ -1517,5 +1804,93 @@ mod tests {
         assert_eq!(s.local_player_id(), Some(4099));
         assert!(!s.note_loot_owner(1454, "ApexZ"));
         assert_eq!(who(&s), (Some(4099), Some("Misti".into()), false));
+    }
+}
+
+#[cfg(test)]
+mod tests_pseudos_conserves {
+    use super::tests::{hit, totals};
+    use super::*;
+
+    /// Mourir puis recommencer le même boss repart de zéro.
+    ///
+    /// Mesuré le 08/10/2026 sur « Désir de Kromede » : le groupe descend le
+    /// boss à 65 %, meurt, et la lecture de PV repasse à 100 % à 16:02:54. Les
+    /// deux tentatives s'additionnaient — le combat enregistré annonce
+    /// 21 159 960 dégâts pour un boss de 15 504 000 PV, soit **136 %**.
+    ///
+    /// Rien ne les séparait : même identifiant d'entité, pas de changement de
+    /// zone, et les coups ne s'arrêtent jamais 30 secondes d'affilée.
+    ///
+    /// Sans la correction, la dernière assertion vaut 1 200 000 au lieu de
+    /// 400 000 : les deux tentatives cumulées.
+    #[test]
+    fn recommencer_un_boss_apres_une_mort_repart_de_zero() {
+        let s = DataStorage::new();
+        // Le jeu annonce les PV du boss, puis le groupe le descend à 65 %.
+        s.set_mob_current_hp(36815, 15_504_000);
+        s.append_damage(hit(1085, 36815, 1_000, 800_000, false));
+        s.set_mob_current_hp(36815, 10_120_286);
+        let (total, _) = totals(&s, 36815);
+        assert_eq!(total, 800_000, "la première tentative est comptée");
+
+        // Un soin de phase ne doit **pas** passer pour une nouvelle tentative.
+        s.set_mob_current_hp(36815, 13_000_000);
+        s.append_damage(hit(1085, 36815, 2_000, 400_000, false));
+        let (total, _) = totals(&s, 36815);
+        assert_eq!(total, 1_200_000, "un soin partiel ne remet pas le compteur");
+
+        // Le groupe meurt : les PV repassent à plein. C'est une reprise.
+        s.set_mob_current_hp(36815, 15_504_000);
+        assert!(
+            s.get_combat_snapshot().get(&36815).is_none(),
+            "la tentative précédente doit être effacée"
+        );
+
+        // La nouvelle tentative compte seule.
+        s.append_damage(hit(1085, 36815, 3_000, 400_000, false));
+        let (total, _) = totals(&s, 36815);
+        assert_eq!(total, 400_000, "seule la nouvelle tentative compte");
+    }
+
+    /// Effacer les chiffres n'efface pas qui sont les gens.
+    ///
+    /// Mesuré le 08/10/2026 : le bouton de remise à zéro appelait
+    /// `reset_nicknames()`, qui vide toute la table. Le rejeu de l'heure de jeu
+    /// qui précédait montre **409 pseudos** connus, dont `532 TankYouNext` ;
+    /// une minute plus tard, l'overlay affichait `#532` et `#9635` au milieu
+    /// d'un combat de boss, et les noms ne sont revenus que deux minutes après,
+    /// quand le jeu les a réannoncés.
+    ///
+    /// `flush` est ce que la remise à zéro appelle désormais. Ce test dit qu'il
+    /// efface le combat et laisse l'identité tranquille.
+    #[test]
+    fn effacer_les_chiffres_nefface_pas_les_pseudos() {
+        let s = DataStorage::new();
+        s.append_nickname_authoritative(532, "TankYouNext");
+        s.append_nickname_authoritative(9635, "Vampany");
+        s.append_damage(hit(532, 900, 1_000, 400_000, false));
+        assert_eq!(s.get_nicknames().len(), 2);
+        let (total, _) = totals(&s, 900);
+        assert_eq!(total, 400_000);
+
+        s.flush();
+
+        assert!(
+            s.get_combat_snapshot().get(&900).is_none(),
+            "les chiffres doivent partir"
+        );
+        assert_eq!(
+            s.get_nicknames().len(),
+            2,
+            "les pseudos doivent rester : les réapprendre prend des minutes"
+        );
+        assert_eq!(s.get_nickname(532).as_deref(), Some("TankYouNext"));
+
+        // Et quand l'identité change vraiment, l'oubli reste possible : le
+        // serveur réattribue les identifiants, donc les garder ferait porter
+        // à quelqu'un le nom d'un autre.
+        s.reset_nicknames();
+        assert!(s.get_nicknames().is_empty(), "l'oubli explicite doit marcher");
     }
 }

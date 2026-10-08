@@ -240,7 +240,18 @@ impl StreamProcessor {
                     self.unwrap_bundle(frame.payload(buffer));
                 }
                 super::framing::FrameKind::Packet => {
-                    self.parse_perfect_packet(frame.bytes(buffer));
+                    let paquet = frame.bytes(buffer);
+                    self.parse_perfect_packet(paquet);
+                    // Ajout XIII NRV : les PV se lisent paquet par paquet.
+                    //
+                    // Ce balayage tournait sur **tout le tampon**, et
+                    // `consume_stream` est rappelé à chaque arrivée d'octets :
+                    // les mêmes enregistrements étaient donc relus à chaque
+                    // tour, et chaque relecture d'une lecture à zéro comptait
+                    // une mort de plus. Mesuré le 08/10/2026 : 31 morts
+                    // comptées pour un joueur qui en avait quelques-unes, et
+                    // celle d'un autre joueur manquée.
+                    self.scan_for_entity_hp(paquet);
                 }
             }
         }
@@ -248,7 +259,6 @@ impl StreamProcessor {
         // Scan for embedded 04 8D ownership sub-packets
         if buffer.len() >= 4 {
             self.scan_for_embedded_04_8d(buffer);
-            self.scan_for_entity_hp(buffer);
         }
 
         // Scan for embedded spawn opcodes (40/41/44/45 36) in the raw buffer.
@@ -303,13 +313,23 @@ impl StreamProcessor {
                         self.pending_compact_skill_context = Some(ctx);
                     }
                     self.parse_perfect_packet(inner_packet);
+                    // Ajout XIII NRV : les PV se lisent **paquet par paquet**.
+                    //
+                    // Ce balayage tournait sur le bloc décompressé entier, donc
+                    // le motif `8D` était aussi reconnu à cheval sur deux
+                    // enregistrements voisins. Mesuré le 08/10/2026 : un joueur
+                    // comptait 31 morts pour une seule réelle, et celle d'un
+                    // autre joueur était manquée. Paquet par paquet, la même
+                    // capture donne des suites de PV plausibles.
+                    self.scan_for_entity_hp(inner_packet);
                 }
             }
         }
 
         // Scan for embedded 04 8D and 40 36 in decompressed data
         self.scan_for_embedded_04_8d(&decompressed);
-        self.scan_for_entity_hp(&decompressed);
+        // `scan_for_entity_hp` n'est plus appelé ici : voir le commentaire dans
+        // la boucle ci-dessus. Sur le bloc entier il inventait des lectures.
         self.scan_for_embedded_40_36(&decompressed);
         self.scan_char_list_self(&decompressed);
         self.scan_masked_identity(&decompressed);
@@ -667,9 +687,14 @@ impl StreamProcessor {
                 i += 1;
                 continue;
             }
-            if data[disc] == 0x02
-                && data[disc + 1] == 0x01
-                && data[disc + 2] == 0x00
+            // Ajout XIII NRV : `01 01 01` est le joueur local, `02 01 00` tout
+            // le reste — y compris les **autres joueurs**, mesuré le 08/10/2026
+            // (2 104 lectures sous ce discriminateur pour les cinq membres du
+            // groupe). Les deux servent à compter les morts ; seul `02` nourrit
+            // le magasin de PV des monstres, comme avant.
+            let pour_les_monstres = data[disc] == 0x02 && data[disc + 1] == 0x01 && data[disc + 2] == 0x00;
+            let pour_le_joueur_local = data[disc] == 0x01 && data[disc + 1] == 0x01 && data[disc + 2] == 0x01;
+            if (pour_les_monstres || pour_le_joueur_local)
                 && data[disc + 7] == 0x00
                 && data[disc + 8] == 0x00
                 && data[disc + 9] == 0x00
@@ -679,7 +704,10 @@ impl StreamProcessor {
                 let cur = u32::from_le_bytes([data[h], data[h + 1], data[h + 2], data[h + 3]]);
                 // Sanity bound: real HP is well under this; rejects misparses.
                 if cur <= 100_000_000 {
-                    self.data_storage.set_mob_current_hp(id_info.value, cur as i32);
+                    if pour_les_monstres {
+                        self.data_storage.set_mob_current_hp(id_info.value, cur as i32);
+                    }
+                    self.data_storage.noter_pv_dentite(id_info.value, cur as i32);
                 }
                 i = disc + 11;
                 continue;

@@ -24,6 +24,33 @@ pub struct DpsData {
     /// Instance id from the party roster (0 = not in a party instance). The
     /// frontend maps it to a dungeon name + difficulty.
     pub dungeon_id: i32,
+
+    /// Ajout XIII NRV : la part des dégâts réellement subis par la cible que
+    /// nous avons comptée, en pourcentage. `None` tant que le jeu ne nous a pas
+    /// donné les PV courants de la cible.
+    ///
+    /// **C'est notre moyen de nous juger nous-mêmes.** Le jeu envoie les PV
+    /// courants de la cible : ce qu'elle a réellement perdu vaut donc
+    /// `target_max_hp - target_current_hp`, tous assaillants confondus. Comparé
+    /// à ce que nous avons suivi, l'écart dit en direct ce qui nous échappe.
+    ///
+    /// Le projet traîne un déficit de dégâts en groupe (−6 à −35 % selon les
+    /// sessions) qu'il fallait jusqu'ici mesurer à la main, en relevant
+    /// l'analyseur du jeu après coup. Ce chiffre le rend visible pendant le
+    /// combat, sans rien comparer.
+    ///
+    /// Au-dessus de 100 % n'est pas une anomalie : les coups qui tombent à
+    /// l'instant de la mort, ou le surplus du dernier coup, dépassent le
+    /// réservoir de vie.
+    pub hp_coverage: Option<f64>,
+    /// Ajout XIII NRV : les PV courants comblés entre deux lectures du jeu, pour
+    /// que la barre descende sans à-coup. `-1` quand aucune lecture n'est
+    /// arrivée.
+    ///
+    /// Séparé de `target_current_hp`, qui reste la lecture brute : c'est elle
+    /// que `hp_coverage` compare à nos chiffres, et la mélanger à nos propres
+    /// coups ferait dire 100 % au contrôle quoi qu'il arrive.
+    pub smoothed_current_hp: i64,
 }
 
 impl DpsData {
@@ -39,6 +66,8 @@ impl DpsData {
             target_total_damage: 0,
             target_current_hp: -1,
             dungeon_id: 0,
+            hp_coverage: None,
+            smoothed_current_hp: -1,
         }
     }
 }

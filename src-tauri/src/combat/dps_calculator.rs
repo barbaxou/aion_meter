@@ -51,6 +51,28 @@ impl TargetSelectionMode {
     }
 }
 
+/// La part des dégâts réellement subis par la cible que nous avons comptée.
+///
+/// Le jeu envoie les PV courants de la cible : ce qu'elle a perdu vaut donc
+/// `max_hp - courants`, tous assaillants confondus. Comparé à ce que nous
+/// avons suivi, l'écart dit ce qui nous échappe — en direct, sans relever
+/// l'analyseur du jeu après coup.
+///
+/// Rend `None` plutôt qu'un chiffre trompeur dans les trois cas où la question
+/// n'a pas de sens : PV maximum inconnu, PV courants jamais observés (le flux
+/// les donne à -1), et cible encore intacte — diviser par zéro perdu n'apprend
+/// rien.
+fn couverture_des_pv(max_hp: i64, courants: i64, suivis: i64) -> Option<f64> {
+    if max_hp <= 0 || courants < 0 {
+        return None;
+    }
+    let perdus = max_hp - courants.min(max_hp);
+    if perdus <= 0 {
+        return None;
+    }
+    Some(100.0 * suivis as f64 / perdus as f64)
+}
+
 pub struct DpsCalculator {
     data_storage: Arc<DataStorage>,
     skill_lookup: Arc<SkillLookup>,
@@ -182,6 +204,11 @@ impl DpsCalculator {
             -1
         };
         dps_data.target_current_hp = target_current_hp;
+        dps_data.smoothed_current_hp = if self.current_target != 0 {
+            self.data_storage.pv_lisses(self.current_target).unwrap_or(-1)
+        } else {
+            -1
+        };
 
         // Collect actors from selected targets
         let mut combined_actors: HashMap<i32, i64> = HashMap::new();
@@ -401,6 +428,8 @@ impl DpsCalculator {
                 .map(|m| m.combat_power)
                 .unwrap_or(0);
             data.heal = soins.get(&uid).copied().unwrap_or(0);
+            // Ajout XIII NRV : le nombre de morts, demandé pour l'overlay.
+            data.deaths = self.data_storage.morts(uid);
             if data.job.is_empty() {
                 if local_ids.as_ref().is_some_and(|ids| ids.contains(&uid)) {
                     data.job = "Unknown".to_string();
@@ -435,7 +464,13 @@ impl DpsCalculator {
         {
             dps_data.target_total_damage = target_max_hp;
             dps_data.target_current_hp = 0;
+            dps_data.smoothed_current_hp = 0;
         }
+        dps_data.hp_coverage = couverture_des_pv(
+            target_max_hp,
+            dps_data.target_current_hp,
+            dps_data.target_total_damage,
+        );
         self.last_dps_snapshot = Some(dps_data.clone());
         dps_data
     }
@@ -552,23 +587,45 @@ impl DpsCalculator {
                     .cloned()
                     .collect();
 
+                // Trois règles, dans cet ordre. Chacune répond à un cas
+                // mesuré pendant le donjon 600065 du 07/10/2026.
+                //
+                // 1. Un boss connu est en vue : c'est lui, le plus récemment
+                //    frappé. Tant qu'il reste dans les données, cette règle
+                //    continue de le désigner même si le groupe tape autre
+                //    chose — c'est ainsi qu'un boss tombé reste à l'écran,
+                //    comme chez un meter tiers.
                 if let Some(&best) = boss_targets.iter()
                     .max_by_key(|&&tid| combat_data.get(&tid).map(|td| td.last_damage_time).unwrap_or(0))
                 {
                     let name = self.resolve_target_name(best);
-                    (HashSet::from([best]), name, best)
-                } else {
-                    // Fall back to most damage
-                    let best = combat_data.iter()
-                        .max_by_key(|(_, td)| td.total_damage);
-                    match best {
-                        Some((&id, _)) => {
-                            let name = self.resolve_target_name(id);
-                            (HashSet::from([id]), name, id)
-                        }
-                        None => (HashSet::new(), String::new(), 0),
-                    }
+                    return (HashSet::from([best]), name, best);
                 }
+
+                // 2. Une cible dont nous ignorons le code : nous ne pouvons
+                //    pas affirmer que ce n'est pas un boss, donc nous la
+                //    montrons. Le code vient du paquet d'apparition ; le
+                //    premier boss du donjon 600065 nous a échappé ainsi le
+                //    07/10/2026 — la table le marque pourtant bien comme boss
+                //    (2350707, Siliator du mensonge) — et l'overlay est resté
+                //    vide tout le combat. La règle 1 l'a manqué, la 3 l'aurait
+                //    tu.
+                let inconnue = combat_data
+                    .iter()
+                    .filter(|(tid, _)| !mob_data.contains_key(tid))
+                    .max_by_key(|(_, td)| td.total_damage);
+                if let Some((&id, _)) = inconnue {
+                    let name = self.resolve_target_name(id);
+                    return (HashSet::from([id]), name, id);
+                }
+
+                // 3. Toutes les cibles sont identifiées et aucune n'est un
+                //    boss : le mode boss se tait. Il repliait ici sur « plus
+                //    de dégâts », ce qui le rendait identique au mode du même
+                //    nom — c'est pourquoi l'overlay s'allumait sur de simples
+                //    mobs. `TrainTargets`, juste en dessous, rend déjà un
+                //    ensemble vide dans le cas équivalent.
+                (HashSet::new(), String::new(), 0)
             }
             TargetSelectionMode::AllTargets => {
                 let all: HashSet<i32> = combat_data.keys().cloned().collect();
@@ -741,11 +798,25 @@ impl DpsCalculator {
             let local_id = self.data_storage.local_player_id().unwrap_or(-1) as i32;
             let actors: Vec<DetailsActorSummary> = record_actors.iter()
                 .map(|(&id, (nick, job))| {
-                    let display_nick = if id == local_id {
-                        nick.clone()
-                    } else {
-                        crate::entity::fight_record::obscure_nickname(nick)
-                    };
+                    // Ajout XIII NRV : les pseudos restent entiers.
+                    //
+                    // Ils étaient masqués ici (`At****a`) avant d'être écrits
+                    // sur le disque. Ce masquage protégeait un envoi qui
+                    // n'existe pas dans cette version : le module `share` est
+                    // un essai à blanc qui n'ouvre aucune socket, et le seul
+                    // envoi réseau est la fiche du joueur local vers le site de
+                    // la guilde — elle ne porte aucun autre nom.
+                    //
+                    // L'historique reste donc sur la machine de son
+                    // propriétaire, et des pseudos entiers y sont plus utiles :
+                    // ils permettent de suivre un joueur d'un combat à l'autre,
+                    // et de résoudre l'effectif par nom.
+                    //
+                    // **Si un partage des combats est ajouté un jour, le
+                    // masquage doit revenir à ce moment-là**, au moment de
+                    // l'envoi et non de l'écriture.
+                    let _ = local_id;
+                    let display_nick = nick.clone();
                     let job_class = JobClass::convert_from_skill(
                         details.skills.iter()
                             .find(|s| s.actor_id == id && !s.job.is_empty())
@@ -1293,4 +1364,251 @@ fn build_nickname_canonical_map_from_aggregates(
         }
     }
     result
+}
+
+#[cfg(test)]
+mod tests_couverture {
+    use super::couverture_des_pv;
+
+    /// La couverture doit dire ce qui nous échappe, et se taire quand la
+    /// question n'a pas de sens.
+    ///
+    /// Le projet traîne un déficit de dégâts en groupe (−6 à −35 % selon les
+    /// sessions) qu'il fallait relever à la main après coup, en comparant avec
+    /// l'analyseur du jeu. Le jeu nous donne pourtant les PV courants de la
+    /// cible : ce qu'elle a perdu est connu, et l'écart avec ce que nous avons
+    /// compté se calcule pendant le combat.
+    ///
+    /// Les chiffres ci-dessous viennent d'une session réelle du 07/10/2026
+    /// relevée dans l'historique d'un meter tiers : une cible de 3 600 000 PV
+    /// abattue par cinq joueurs.
+    #[test]
+    fn la_couverture_dit_ce_qui_nous_echappe() {
+        // Cible morte, tout compté : la couverture est complète.
+        assert_eq!(
+            couverture_des_pv(3_600_000, 0, 3_600_000),
+            Some(100.0),
+            "témoin : tout compté sur une cible morte doit faire 100 %"
+        );
+
+        // Le déficit de groupe, rendu visible : un quart des coups manquent.
+        let c = couverture_des_pv(3_600_000, 0, 2_700_000).expect("calculable");
+        assert!((c - 75.0).abs() < 0.001, "75 % attendu, obtenu {c}");
+
+        // À mi-combat, la cible a perdu la moitié de sa vie.
+        let c = couverture_des_pv(3_600_000, 1_800_000, 1_800_000).expect("calculable");
+        assert!((c - 100.0).abs() < 0.001, "100 % attendu à mi-combat, obtenu {c}");
+
+        // Au-dessus de 100 % : les coups tombés à l'instant de la mort, ou le
+        // surplus du dernier. Ce n'est pas une anomalie, on ne le masque pas.
+        let c = couverture_des_pv(6_800_000, 0, 6_807_244).expect("calculable");
+        assert!(c > 100.0, "le surplus doit rester visible, obtenu {c}");
+
+        // Et les trois cas où la question n'a pas de sens.
+        assert_eq!(couverture_des_pv(0, 0, 500), None, "PV maximum inconnu");
+        assert_eq!(couverture_des_pv(3_600_000, -1, 500), None, "PV courants jamais vus");
+        assert_eq!(
+            couverture_des_pv(3_600_000, 3_600_000, 0),
+            None,
+            "cible intacte : rien de perdu, rien à rapporter"
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests_mode_boss {
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    use super::{DpsCalculator, TargetCombatData};
+    use crate::combat::data_storage::DataStorage;
+    use crate::combat::ping_tracker::PingTracker;
+    use crate::i18n::lookup::{NpcLookup, SkillLookup};
+
+    /// Les trois monstres de la mesure du 07/10/2026, avec leurs vrais codes.
+    ///
+    /// `2300910` est un boss de donjon (Ferocious Horn Nuakum, 6 300 000 PV,
+    /// quinze combats enregistrés chez nous), `2100040` un boss de monde
+    /// (Rotten Kutar, 78 750 000 PV) et `2000002` un monstre ordinaire
+    /// (Draconute Ranger, `isBoss: false` dans la table du jeu).
+    const TABLE: &str = r#"{
+        "2300910": {"name": "Ferocious Horn Nuakum", "isBoss": true},
+        "2100040": {"name": "Rotten Kutar", "isBoss": true},
+        "2000002": {"name": "Draconute Ranger", "isBoss": false}
+    }"#;
+
+    fn cible(target_id: i32, degats: i64, instant: i64) -> TargetCombatData {
+        TargetCombatData {
+            target_id,
+            total_damage: degats,
+            first_damage_time: instant,
+            last_damage_time: instant,
+            last_packet_id: -1,
+            actors: HashMap::new(),
+        }
+    }
+
+    fn calculateur(stockage: Arc<DataStorage>) -> DpsCalculator {
+        let npcs = Arc::new(NpcLookup::new());
+        npcs.load_from_json(TABLE);
+        let mut calc = DpsCalculator::new(
+            stockage,
+            Arc::new(SkillLookup::new()),
+            npcs,
+            Arc::new(PingTracker::new()),
+        );
+        calc.set_target_selection_mode("bossTargets");
+        calc
+    }
+
+    /// Le mode boss se taisait-il sur un monstre ordinaire ?
+    ///
+    /// Non : la branche `BossTargets` repliait sur « la cible qui a le plus
+    /// encaissé » dès qu'aucun boss n'était trouvé, ce qui la rendait
+    /// identique au mode « plus de dégâts ». Comme c'est le mode par défaut,
+    /// l'overlay s'allumait sur n'importe quel mob de terrain — le reproche
+    /// exact fait à l'outil, alors qu'un meter tiers reste muet.
+    ///
+    /// Sans la correction, la troisième assertion échoue : le mode boss
+    /// désigne le Draconute Ranger.
+    #[test]
+    fn le_mode_boss_ignore_un_monstre_ordinaire() {
+        let stockage = Arc::new(DataStorage::new());
+        // Deux entités frappées : un mob ordinaire, puis un boss de donjon.
+        stockage.append_mob(5001, 2000002);
+        stockage.append_mob(5002, 2300910);
+        let mut calc = calculateur(stockage);
+
+        let pseudos: HashMap<i32, String> = HashMap::new();
+        let invocations: HashMap<i32, i32> = HashMap::new();
+
+        // 1. Le boss est là : c'est lui qu'on suit, même s'il a moins encaissé.
+        let mut combat = HashMap::new();
+        combat.insert(5001, cible(5001, 900_000, 10));
+        combat.insert(5002, cible(5002, 400_000, 20));
+        let (cibles, nom, id) = calc.decide_target(&combat, &pseudos, &invocations);
+        assert_eq!(id, 5002, "le boss doit primer sur le mob le plus frappé");
+        assert_eq!(nom, "Ferocious Horn Nuakum");
+        assert_eq!(cibles.len(), 1);
+
+        // 2. Un boss de monde compte aussi : la table du jeu le marque, même
+        //    sans donjon. Rotten Kutar, 78 750 000 PV, relevé le 07/10/2026.
+        let stockage = Arc::new(DataStorage::new());
+        stockage.append_mob(5003, 2100040);
+        let mut calc_monde = calculateur(stockage);
+        let mut combat = HashMap::new();
+        combat.insert(5003, cible(5003, 700_000, 30));
+        let (_, nom, id) = calc_monde.decide_target(&combat, &pseudos, &invocations);
+        assert_eq!((id, nom.as_str()), (5003, "Rotten Kutar"));
+
+        // 3. Le témoin : plus que le mob ordinaire. Le mode boss doit se taire.
+        let mut combat = HashMap::new();
+        combat.insert(5001, cible(5001, 900_000, 40));
+        let (cibles, nom, id) = calc.decide_target(&combat, &pseudos, &invocations);
+        assert!(
+            cibles.is_empty() && nom.is_empty() && id == 0,
+            "mode boss sur un simple mob : attendu aucune cible, obtenu {id} « {nom} »"
+        );
+    }
+
+    /// Le boss tombé reste à l'écran, le trash alentour ne le remplace pas.
+    ///
+    /// Mesuré le 07/10/2026 : un meter tiers affichait encore Siliator du
+    /// mensonge à « 0 / 7,25M », temps de combat figé à 02:35, alors que le
+    /// boss était mort et que le groupe tapait autre chose. Le nôtre, lui,
+    /// basculait sur la cible la plus frappée — donc sur le trash.
+    ///
+    /// C'est la règle 1 qui le fait : tant que le boss est dans les données,
+    /// il reste un boss à désigner, et le trash ne peut pas le lui prendre.
+    /// Une règle « garder le dernier boss » a d'abord été écrite pour ça, puis
+    /// retirée — ce test passait sans elle, donc elle était du code mort.
+    #[test]
+    fn le_boss_tombe_reste_a_l_ecran() {
+        let stockage = Arc::new(DataStorage::new());
+        stockage.append_mob(6001, 2300910); // boss de donjon
+        stockage.append_mob(6002, 2000002); // trash identifié
+        let mut calc = calculateur(stockage);
+        let pseudos: HashMap<i32, String> = HashMap::new();
+        let invocations: HashMap<i32, i32> = HashMap::new();
+
+        // Le boss est frappé : c'est lui.
+        let mut combat = HashMap::new();
+        combat.insert(6001, cible(6001, 6_300_000, 100));
+        let (_, _, id) = calc.decide_target(&combat, &pseudos, &invocations);
+        assert_eq!(id, 6001);
+
+        // Le boss est tombé, le groupe tape le trash. Le boss est encore dans
+        // les données : il reste affiché.
+        let mut combat = HashMap::new();
+        combat.insert(6001, cible(6001, 6_300_000, 100));
+        combat.insert(6002, cible(6002, 400_000, 200));
+        let (_, nom, id) = calc.decide_target(&combat, &pseudos, &invocations);
+        assert_eq!(
+            (id, nom.as_str()),
+            (6001, "Ferocious Horn Nuakum"),
+            "le dernier boss doit rester affiché tant qu'il est dans les données"
+        );
+
+        // La remise à zéro par inactivité l'a sorti des données : silence.
+        let mut combat = HashMap::new();
+        combat.insert(6002, cible(6002, 400_000, 300));
+        let (cibles, _, id) = calc.decide_target(&combat, &pseudos, &invocations);
+        assert!(cibles.is_empty() && id == 0, "obtenu {id} après la sortie du boss");
+    }
+
+    /// Une cible dont nous ignorons le code reste affichée, même entourée de
+    /// trash identifié.
+    ///
+    /// Cas réel du 07/10/2026, donjon 600065 : le premier boss, Siliator du
+    /// mensonge (2350707), est bien marqué boss dans la table du jeu, mais son
+    /// paquet d'apparition nous a échappé. Sans son code, la règle 1 ne le
+    /// trouve pas ; le trash alentour, lui, était identifié, donc la règle 4
+    /// faisait taire l'overlay pendant tout le combat. Le deuxième boss, dont
+    /// le code était connu, s'est affiché normalement.
+    ///
+    /// Sans la règle 2, la seconde assertion échoue : plus aucune cible.
+    #[test]
+    fn une_cible_non_identifiee_nest_pas_declaree_non_boss() {
+        let stockage = Arc::new(DataStorage::new());
+        stockage.append_mob(8002, 2000002); // le trash, lui, est identifié
+        let mut calc = calculateur(stockage);
+        let pseudos: HashMap<i32, String> = HashMap::new();
+        let invocations: HashMap<i32, i32> = HashMap::new();
+
+        // Seul le trash identifié : silence, c'est la règle 4.
+        let mut combat = HashMap::new();
+        combat.insert(8002, cible(8002, 300_000, 10));
+        let (cibles, _, _) = calc.decide_target(&combat, &pseudos, &invocations);
+        assert!(cibles.is_empty(), "trash identifié : le mode boss se tait");
+
+        // Le boss dont l'apparition nous a échappé entre en scène. Nous ne
+        // pouvons pas affirmer que ce n'est pas un boss : on l'affiche.
+        let mut combat = HashMap::new();
+        combat.insert(8002, cible(8002, 300_000, 10));
+        combat.insert(8001, cible(8001, 7_254_395, 20));
+        let (cibles, _, id) = calc.decide_target(&combat, &pseudos, &invocations);
+        assert_eq!(
+            id, 8001,
+            "cible non identifiée : elle doit rester affichée, obtenu {id}"
+        );
+        assert_eq!(cibles.len(), 1);
+    }
+
+    /// Et quand nous ne savons pas à quoi nous tapons, le repli reste.
+    ///
+    /// Le code du monstre vient du paquet d'apparition. Entrer en combat après
+    /// coup, ou le manquer, laisse la cible sans code : l'absence de boss n'est
+    /// alors pas établie, et se taire ferait perdre le combat entier. Ce cas
+    /// garde donc l'ancien repli, et c'est le seul.
+    #[test]
+    fn sans_code_de_monstre_le_mode_boss_montre_quand_meme() {
+        let stockage = Arc::new(DataStorage::new());
+        let mut calc = calculateur(stockage);
+        let mut combat = HashMap::new();
+        combat.insert(7001, cible(7001, 1_000_000, 10));
+        combat.insert(7002, cible(7002, 2_000_000, 20));
+        let (cibles, _, id) = calc.decide_target(&combat, &HashMap::new(), &HashMap::new());
+        assert_eq!(id, 7002, "sans code connu, on montre la cible la plus frappée");
+        assert_eq!(cibles.len(), 1);
+    }
 }
