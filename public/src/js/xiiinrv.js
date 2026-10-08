@@ -82,14 +82,52 @@
 
     const b = bridge();
     if (b) {
-      champJeton.value = b.getSetting(CLE_JETON) || "";
       caseActif.checked = b.getSetting(CLE_ACTIF) === "true";
     }
 
+    // Ajout XIII NRV : le jeton ne passe plus par `setSetting`.
+    //
+    // Relevé pendant l'audit du 08/10/2026 : `setSetting` écrit aussi dans le
+    // `localStorage` du webview, donc le jeton s'y trouvait en clair, dans un
+    // fichier que personne ne pense à regarder. Il a maintenant ses propres
+    // commandes, et il ne quitte jamais le processus Rust : cette page sait
+    // seulement s'il y en a un, jamais lequel.
+    const appelNettoyage = invoke();
+    try {
+      localStorage.removeItem(CLE_JETON);
+    } catch {
+      // Un stockage indisponible n'est pas une raison de ne pas continuer.
+    }
+
+    const POINTS = "•".repeat(16);
+    const montrerEtatJeton = async () => {
+      const appel = invoke();
+      if (!appel) return;
+      try {
+        const present = await appel("xiiinrv_jeton_present");
+        champJeton.value = present ? POINTS : "";
+        champJeton.placeholder = present
+          ? t("tokenSet", "Jeton enregistré — collez-en un autre pour le remplacer")
+          : t("tokenNone", "Collez ici le jeton donné par la guilde");
+      } catch {
+        // Rien à afficher : on laisse le champ tel quel.
+      }
+    };
+    void appelNettoyage;
+    void montrerEtatJeton();
+
     // Le jeton n'est enregistré qu'à la sortie du champ : on évite d'écrire un
-    // jeton incomplet à chaque frappe.
-    champJeton.addEventListener("change", () => {
-      bridge()?.setSetting(CLE_JETON, champJeton.value.trim());
+    // jeton incomplet à chaque frappe. Les points affichés ne sont pas un
+    // jeton : les retaper tels quels ne doit rien changer.
+    champJeton.addEventListener("focus", () => {
+      if (champJeton.value === POINTS) champJeton.value = "";
+    });
+    champJeton.addEventListener("change", async () => {
+      const saisi = champJeton.value.trim();
+      if (saisi === POINTS) return;
+      const appel = invoke();
+      if (appel) await appel("xiiinrv_enregistrer_jeton", { jeton: saisi }).catch(() => {});
+      await montrerEtatJeton();
       rafraichir();
     });
     caseActif.addEventListener("change", () => {

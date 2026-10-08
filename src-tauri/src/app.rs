@@ -276,11 +276,68 @@ fn update_settings(
     // en compte.
     if key.starts_with("xiiinrv_") {
         crate::xiiinrv::envoi::configurer(
-            state.settings.get(crate::xiiinrv::CLE_JETON),
+            jeton_en_clair(&state),
             state.settings.get(crate::xiiinrv::CLE_URL),
             state.settings.get(crate::xiiinrv::CLE_ACTIF).as_deref() == Some("true"),
         );
     }
+}
+
+/// Le jeton de la guilde, ouvert depuis les réglages.
+///
+/// Les réglages gardent un scellé ; personne d'autre que cette fonction n'a
+/// besoin du jeton en clair.
+fn jeton_en_clair(state: &AppState) -> Option<String> {
+    state
+        .settings
+        .get(crate::xiiinrv::CLE_JETON)
+        .and_then(|e| crate::xiiinrv::jeton::ouvrir(&e))
+}
+
+/// Enregistre le jeton de la guilde, scellé.
+///
+/// Il a sa propre commande parce que `setSetting`, côté page, écrit **aussi**
+/// dans le `localStorage` du webview — relevé pendant l'audit du 08/10/2026 :
+/// le jeton s'y trouvait en clair, dans un fichier que personne ne pense à
+/// regarder. Par ce chemin-ci, il ne quitte jamais le processus Rust.
+#[tauri::command]
+fn xiiinrv_enregistrer_jeton(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    jeton: String,
+) {
+    let scelle = crate::xiiinrv::jeton::sceller(&jeton);
+    state.settings.set(crate::xiiinrv::CLE_JETON, &scelle);
+    // La page n'a pas besoin de la valeur : elle veut juste savoir qu'un jeton
+    // existe, pour afficher le bon état.
+    let _ = app.emit("xiiinrv-jeton-change", !scelle.is_empty());
+    crate::xiiinrv::envoi::configurer(
+        jeton_en_clair(&state),
+        state.settings.get(crate::xiiinrv::CLE_URL),
+        state.settings.get(crate::xiiinrv::CLE_ACTIF).as_deref() == Some("true"),
+    );
+    tracing::info!(
+        "XIII NRV : jeton {}",
+        if scelle.is_empty() { "effacé" } else { "enregistré" }
+    );
+}
+
+/// Y a-t-il une version plus récente annoncée par le site ?
+///
+/// Ne télécharge rien et n'exécute rien : lit un petit fichier JSON, compare
+/// deux numéros. Toute erreur rend « à jour » — voir `xiiinrv::version`.
+#[tauri::command]
+async fn xiiinrv_verifier_version(
+    state: tauri::State<'_, AppState>,
+) -> Result<crate::xiiinrv::version::Verdict, String> {
+    let url = state.settings.get(crate::xiiinrv::version::CLE_URL_VERSION);
+    Ok(crate::xiiinrv::version::verifier(url, env!("CARGO_PKG_VERSION")).await)
+}
+
+/// Un jeton est-il enregistré ? La page n'en apprend pas plus.
+#[tauri::command]
+fn xiiinrv_jeton_present(state: tauri::State<'_, AppState>) -> bool {
+    jeton_en_clair(&state).is_some_and(|j| !j.trim().is_empty())
 }
 
 #[tauri::command]
@@ -389,11 +446,41 @@ fn bind_local_nickname(state: tauri::State<'_, AppState>, actor_id: i64, nicknam
 
 #[tauri::command]
 fn reset_combat(state: tauri::State<'_, AppState>) {
+    // Ajout XIII NRV : le bouton de remise à zéro efface les chiffres, pas
+    // l'identité des joueurs.
+    //
+    // Il appelait `reset_nicknames()`, qui vide toute la table des pseudos.
+    // Mesuré le 08/10/2026 : **409 pseudos** appris en une heure de jeu,
+    // effacés d'un coup ; l'overlay a ensuite affiché `#532` et `#9635` à la
+    // place de deux coéquipiers pendant tout un combat de boss, et les noms ne
+    // sont revenus que deux minutes plus tard, quand le jeu les a réannoncés.
+    //
+    // Le raisonnement était déjà écrit ailleurs dans ce fichier, pour le
+    // changement de zone : « wiping nicknames/known-players/summons would drop
+    // your party (and you) to raw ids until they happen to be re-broadcast ».
+    // Il vaut tout autant ici.
+    //
+    // Les pseudos ne sont effacés que là où l'identité change réellement —
+    // changement de personnage, donc nouvelle connexion et identifiants
+    // réattribués par le serveur. Garder la table dans ce cas-là ferait pire :
+    // un identifiant réemployé porterait le nom de quelqu'un d'autre.
     state.dps_calculator.lock().restart_target_selection(true);
     // Don't reset port detector or ping — keep the network connection alive
-    // Only clear combat data and re-learn nicknames from future packets
+    state.data_storage.hide_party_placeholders();
+    tracing::info!("Remise à zéro demandée : chiffres effacés, pseudos conservés");
+}
+
+/// Remise à zéro **et** oubli des pseudos, pour un vrai changement d'identité.
+///
+/// Appelée au changement de personnage : le serveur réattribue les identifiants
+/// d'entité, donc les anciennes liaisons nom → identifiant deviennent fausses.
+/// Montrer un mauvais nom est pire que montrer un numéro.
+#[tauri::command]
+fn reset_combat_et_identites(state: tauri::State<'_, AppState>) {
+    state.dps_calculator.lock().restart_target_selection(true);
     state.data_storage.reset_nicknames();
     state.data_storage.hide_party_placeholders();
+    tracing::info!("Changement de personnage : chiffres et pseudos effacés");
 }
 
 #[tauri::command]
@@ -464,9 +551,37 @@ fn quit_app(app: tauri::AppHandle) {
     app.exit(0);
 }
 
+/// Un nom de fichier de cache, et rien d'autre.
+///
+/// `read_cached_icon` et `write_cached_icon` recevaient la clé depuis la page
+/// et l'assemblaient telle quelle sur le dossier de cache. `Path::join`
+/// remplace la base dès qu'on lui donne un chemin absolu, et `..` remonte : une
+/// clé comme `..\..\Demarrage\x.bat` écrivait donc hors du cache, n'importe où
+/// dans le profil de l'utilisateur.
+///
+/// Seul le code de la page peut appeler ces commandes, donc l'exploiter
+/// supposait déjà d'exécuter du code dans la fenêtre. Mais ce verrou coûte dix
+/// lignes, et il retire « écrire où l'on veut » de la liste de ce que cette
+/// application sait faire. Relevé pendant l'audit du 08/10/2026.
+fn nom_de_cache_sur(key: &str) -> Option<String> {
+    if key.is_empty() || key.len() > 128 {
+        return None;
+    }
+    // Pas de séparateur, pas de remontée, pas de lettre de lecteur : rien que
+    // les caractères qu'une clé d'icône légitime emploie.
+    let propre = key
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.');
+    if !propre || key.contains("..") || key.starts_with('.') {
+        return None;
+    }
+    Some(key.to_string())
+}
+
 #[tauri::command]
 fn read_cached_icon(state: tauri::State<'_, AppState>, key: String) -> Option<String> {
-    let path = state.app_data_dir.join("icon_cache").join(&key);
+    let nom = nom_de_cache_sur(&key)?;
+    let path = state.app_data_dir.join("icon_cache").join(nom);
     std::fs::read_to_string(&path).ok()
 }
 
@@ -519,9 +634,13 @@ fn log_from_ui(message: String) {
 
 #[tauri::command]
 fn write_cached_icon(state: tauri::State<'_, AppState>, key: String, data: String) {
+    let Some(nom) = nom_de_cache_sur(&key) else {
+        tracing::warn!("Clé de cache d'icône refusée : {key:?}");
+        return;
+    };
     let cache_dir = state.app_data_dir.join("icon_cache");
     let _ = std::fs::create_dir_all(&cache_dir);
-    let path = cache_dir.join(&key);
+    let path = cache_dir.join(nom);
     let _ = std::fs::write(&path, &data);
 }
 
@@ -2076,8 +2195,18 @@ pub fn run() {
             crate::xiiinrv::collecte::brancher_le_groupe(data_storage.clone());
             {
                 let etat = app.state::<AppState>();
+                // Reprise des installations antérieures à 2.0.75 : le jeton y
+                // est en clair dans les réglages. On le scelle une fois, au
+                // premier démarrage qui suit la mise à jour.
+                if let Some(ancien) = etat.settings.get(crate::xiiinrv::CLE_JETON) {
+                    if crate::xiiinrv::jeton::a_resceller(&ancien) {
+                        let scelle = crate::xiiinrv::jeton::sceller(&ancien);
+                        etat.settings.set(crate::xiiinrv::CLE_JETON, &scelle);
+                        tracing::info!("XIII NRV : jeton repris et scellé");
+                    }
+                }
                 crate::xiiinrv::demarrer(
-                    etat.settings.get(crate::xiiinrv::CLE_JETON),
+                    jeton_en_clair(&etat),
                     etat.settings.get(crate::xiiinrv::CLE_URL),
                     etat.settings.get(crate::xiiinrv::CLE_ACTIF).as_deref() == Some("true"),
                 );
@@ -2157,6 +2286,7 @@ pub fn run() {
             bind_local_nickname,
             clear_settings,
             reset_combat,
+            reset_combat_et_identites,
             is_admin,
             set_language,
             set_debug_logging,
@@ -2166,6 +2296,9 @@ pub fn run() {
             quit_app,
             open_url,
             read_cached_icon,
+            xiiinrv_enregistrer_jeton,
+            xiiinrv_jeton_present,
+            xiiinrv_verifier_version,
             write_cached_icon,
             log_from_ui,
             suspend_capture,
@@ -2197,4 +2330,47 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests_cache_icone {
+    use super::nom_de_cache_sur;
+
+    /// Une clé de cache ne doit pas pouvoir sortir du dossier de cache.
+    ///
+    /// Relevé pendant l'audit du 08/10/2026 : `read_cached_icon` et
+    /// `write_cached_icon` recevaient la clé de l'interface et l'assemblaient
+    /// telle quelle sur le dossier de cache. `Path::join` remplace la base dès
+    /// qu'on lui donne un chemin absolu, et `..` remonte : la commande savait
+    /// donc écrire n'importe où dans le profil de l'utilisateur.
+    ///
+    /// Sans la correction, toutes les clés ci-dessous étaient acceptées.
+    #[test]
+    fn une_cle_de_cache_ne_sort_pas_du_dossier() {
+        // Ce qu'une vraie clé ressemble.
+        assert_eq!(nom_de_cache_sur("skill_18730002.png"), Some("skill_18730002.png".into()));
+        assert_eq!(nom_de_cache_sur("icon-42"), Some("icon-42".into()));
+
+        // Et tout ce qui doit être refusé.
+        for mauvaise in [
+            "../evasion",
+            r"..\evasion",
+            "dossier/fichier",
+            r"dossier\fichier",
+            r"C:\Windows\System32\x",
+            "/etc/passwd",
+            r"\\serveur\partage\x",
+            ".cache",
+            "",
+        ] {
+            assert_eq!(
+                nom_de_cache_sur(mauvaise),
+                None,
+                "clé acceptée alors qu'elle sort du dossier : {mauvaise:?}"
+            );
+        }
+
+        // Et une clé démesurée, qui ne vient d'aucun usage légitime.
+        assert_eq!(nom_de_cache_sur(&"a".repeat(200)), None);
+    }
 }

@@ -183,9 +183,22 @@
     window._dpsApp?._onOverlayLockChanged?.(!!event?.payload);
   });
 
+// Message de Npcap, traduit et precise par XIII NRV. Celui d'origine etait en
+// anglais et ne disait pas ce qui fait reellement echouer l'installation :
+// l'option « Restrict Npcap driver's access to Administrators only », cochee
+// par defaut dans l'installateur de Npcap, oblige ensuite a lancer le meter en
+// administrateur pour qu'il voie quoi que ce soit.
+const DEFAUT_NPCAP = `Npcap est necessaire pour lire le trafic du jeu, et il n'est pas installe.
+
+Pendant son installation, DECOCHEZ la case
+« Restrict Npcap driver's access to Administrators only »,
+sinon le meter devra etre lance en administrateur.
+
+Ouvrir la page de telechargement ?`;
+
   listen("npcap-missing", () => {
-    const msg = "Npcap is required for packet capture but is not installed.\n\nWould you like to download it now?";
-    if (confirm(msg)) {
+    const t = (cle, defaut) => window.i18n?.t?.(cle, defaut) ?? defaut;
+    if (confirm(t("npcap.manquant", DEFAUT_NPCAP))) {
       shellOpen("https://npcap.com/#download");
     }
   });
@@ -337,8 +350,13 @@
     },
 
     // --- DPS & Combat ---
-    resetDps() {
-      invoke("reset_combat").catch(() => {});
+    // Ajout XIII NRV : `oublierLesPseudos` n'est vrai qu'au changement de
+    // personnage, parce que le serveur reattribue alors les identifiants
+    // d'entite. Partout ailleurs — le bouton de remise a zero, la touche de
+    // rafraichissement — les pseudos des coequipiers restent : les reapprendre
+    // prend des minutes, pendant lesquelles l'overlay affiche des numeros.
+    resetDps({ oublierLesPseudos = false } = {}) {
+      invoke(oublierLesPseudos ? "reset_combat_et_identites" : "reset_combat").catch(() => {});
       cachedDpsJson = null;
       // Clear frontend state and skip the 1s grace period
       if (window._dpsApp) {

@@ -28,6 +28,8 @@
 
 pub mod collecte;
 pub mod envoi;
+pub mod jeton;
+pub mod version;
 
 pub use collecte::observer;
 pub use envoi::{demarrer, envoyer_maintenant, etat_partage};
