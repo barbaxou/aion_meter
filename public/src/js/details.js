@@ -121,9 +121,9 @@ const createDetailsUI = ({
       const h12 = h24 % 12 || 12;
       return `${yr}-${mo}-${day} @ ${period} ${h12}:${mm}`;
     }
-    const period = h24 < 12 ? "AM" : "PM";
-    const h12 = h24 % 12 || 12;
-    return `${yr}-${mo}-${day} @ ${h12}:${mm} ${period}`;
+    // Ajout XIII NRV : 24 h. « 12:49 AM » se lisait mal ; le reste de
+    // l'application (l'historique) était déjà en 24 h.
+    return `${yr}-${mo}-${day} @ ${String(h24).padStart(2, "0")}:${mm}`;
   };
 
   const renderFightTitle = () => {
@@ -872,6 +872,69 @@ const createDetailsUI = ({
   };
   const GRID_COL_ORDER = ["name", "hit", "dmg", "dmgpct", "mhit", "mdmg", "crit", "parry", "perfect", "double", "back", "frontal", "powershard", "regen", "mindmg", "avgdmg", "maxdmg"];
 
+  // Ajout XIII NRV : en mode Soins, ces colonnes sont structurellement vides.
+  // Le stockage des soins ne retient que le total et le nombre de tics (voir
+  // `append_heal` et `heal_map` cote Rust) : critique, parade, parfait, double,
+  // dos, face, coups multiples, eclat, regeneration, minimum et maximum ne sont
+  // jamais renseignes. Les afficher a zero donnait un tableau illisible.
+  const COLONNES_SANS_OBJET_EN_SOINS = [
+    "mhit", "mdmg", "crit", "parry", "perfect", "double",
+    "back", "frontal", "powershard", "regen", "mindmg", "maxdmg",
+  ];
+
+  // Et ces en-tetes parlent de degats alors que la colonne montre des soins.
+  const EN_TETES_SOINS = {
+    hit: ["details.skills.ticks", "Tics"],
+    dmg: ["details.skills.heal", "Soins"],
+    dmgpct: ["details.skills.healPct", "S%"],
+    avgdmg: ["details.skills.avgHeal", "Moy"],
+  };
+
+  const appliquerModeAuTableau = () => {
+    if (!detailsPanel) return;
+    const soins = detailsMode === "heal";
+    for (const col of COLONNES_SANS_OBJET_EN_SOINS) {
+      detailsPanel.classList.toggle(`soins-sans-${col}`, soins);
+    }
+    const entete = detailsPanel.querySelector(".detailsSkills .skillHeader");
+    if (entete) {
+      for (const [col, [cle, defaut]] of Object.entries(EN_TETES_SOINS)) {
+        const cellule = entete.querySelector(`.cell.${col}`);
+        if (!cellule) continue;
+        if (soins) {
+          if (!cellule.dataset.libelleDegats) {
+            cellule.dataset.libelleDegats = cellule.textContent;
+            cellule.dataset.libelleI18n = cellule.getAttribute("data-i18n") || "";
+          }
+          cellule.textContent = i18n?.t(cle, defaut) ?? defaut;
+          cellule.removeAttribute("data-i18n");
+        } else if (cellule.dataset.libelleDegats) {
+          cellule.textContent = cellule.dataset.libelleDegats;
+          if (cellule.dataset.libelleI18n) {
+            cellule.setAttribute("data-i18n", cellule.dataset.libelleI18n);
+          }
+        }
+      }
+    }
+    const note = detailsPanel.querySelector(".detailsSkills .detailsFootnote");
+    if (note) {
+      const cle = soins ? "details.legendeSoins" : "details.legendeDegats";
+      const defaut = soins
+        ? "Tics : nombre de soins appliqués · Soins : total soigné · S% : part des soins de ce joueur · Moy : soin moyen par tic. Le jeu n'envoie pas de critique ni de minimum/maximum sur les soins, ces colonnes sont donc masquées."
+        : "Lancers : nombre de coups · DGT : dégâts totaux · D% : part des dégâts · MC% : part des lancers ayant touché plusieurs fois · DCM : dégâts de ces coups multiples · CRIT, PAR, PARF, DBL : taux de critique, parade, parfait, double · DOS, FACE : taux d'attaque dans le dos et de face · MIN, MOY, MAX : dégâts du plus faible, du moyen et du plus fort.";
+      let legende = note.parentElement?.querySelector(".detailsLegende");
+      if (!legende) {
+        legende = document.createElement("div");
+        legende.className = "detailsFootnote detailsLegende";
+        note.insertAdjacentElement("afterend", legende);
+      }
+      legende.textContent = i18n?.t(cle, defaut) ?? defaut;
+      // La phrase sur les degats sur la duree ne vaut que pour les degats.
+      note.style.display = soins ? "none" : "";
+    }
+    updateGridColumns();
+  };
+
   let lastMeasuredNameWidth = 0;
   const updateGridColumns = () => {
     if (!detailsPanel) return;
@@ -885,7 +948,11 @@ const createDetailsUI = ({
       skillsContainer.style.setProperty("--scrollbar-w", `${scrollbarW}px`);
     }
 
-    const visibleCols = GRID_COL_ORDER.filter((col) => !detailsPanel.classList.contains(`hide-col-${col}`));
+    const visibleCols = GRID_COL_ORDER.filter(
+      (col) =>
+        !detailsPanel.classList.contains(`hide-col-${col}`) &&
+        !detailsPanel.classList.contains(`soins-sans-${col}`)
+    );
     if (lastMeasuredNameWidth > 0) {
       const dataCols = visibleCols.filter((c) => c !== "name");
       const template = `${lastMeasuredNameWidth}px ${dataCols.map((col) => GRID_COL_DEFS[col]).join(" ")}`;
@@ -2196,6 +2263,28 @@ const createDetailsUI = ({
         detectedJobByActorId.set(rowActorId, String(row.job));
       }
     }
+    // Ajout XIII NRV : en direct, l'objet de statistiques est construit par
+    // `buildCombinedDetails`, qui agrège les chiffres par acteur — dégâts
+    // subis, coups reçus, soins au groupe. Un combat rouvert depuis
+    // l'historique passe, lui, par `getDetails` côté overlay, qui ne connaît
+    // que les compétences : ces trois chiffres y étaient absents, et la
+    // fenêtre affichait « — ».
+    //
+    // L'enregistrement les contient pourtant : 842 269 dégâts subis et 386
+    // coups reçus relevés le 08/10/2026 sur un combat qui affichait « — ».
+    // On les recalcule ici depuis la table d'acteurs, déjà remplie depuis
+    // l'enregistrement par `openHistoryFight`.
+    if (details && typeof details === "object" && details.totalDamageReceived === undefined) {
+      const ids = selectedAttackerIds || [...detailsActors.keys()];
+      const somme = (champ) =>
+        (Array.isArray(ids) ? ids : []).reduce((total, id) => {
+          const acteur = detailsActors.get(Number(id));
+          return total + (Number(acteur?.[champ]) || 0);
+        }, 0);
+      details.totalDamageReceived = somme("damageReceived");
+      details.totalHitsReceived = somme("hitsReceived");
+      if (!details.totalPartyHeal) details.totalPartyHeal = somme("partyHeal");
+    }
     rememberJobsFromDetails(details);
     if (!selectedAttackerIds || selectedAttackerIds.length === 0) {
       lastUnfilteredDetails = details;
@@ -2366,6 +2455,7 @@ const createDetailsUI = ({
   const openHistoryFight = async (record) => {
     if (autoRefreshTimer) { clearInterval(autoRefreshTimer); autoRefreshTimer = null; }
     detailsMode = "dmg";
+    appliquerModeAuTableau();
     historyRecord = record;
     openSeq++;
     const seq = openSeq;
@@ -2430,6 +2520,16 @@ const createDetailsUI = ({
     if (seq !== openSeq) return;
     const fakeRow = { id: null, job: "", name: record.bossName };
     window._historyDetailsOverride = record.details;
+    // Ajout XIII NRV : les statistiques par acteur — dégâts subis, coups reçus,
+    // soins au groupe, régénération — étaient lues dans l'état **en direct**,
+    // jamais dans l'enregistrement. Un combat rouvert depuis l'historique les
+    // affichait donc vides (« — »), alors que le fichier les contient : 1 120 574
+    // dégâts subis relevés le 08/10/2026 sur un combat qui affichait « — ».
+    detailsActors = new Map();
+    for (const acteur of Array.isArray(record.actors) ? record.actors : []) {
+      const id = Number(acteur?.actorId);
+      if (Number.isFinite(id) && id > 0) detailsActors.set(id, acteur);
+    }
     const processedDetails = await getDetails(fakeRow, {
       targetId: record.targetId,
       totalTargetDamage: record.totalDamage,
@@ -2478,6 +2578,7 @@ const createDetailsUI = ({
     if (next === detailsMode) return;
     detailsMode = next;
     syncModeButtons();
+    appliquerModeAuTableau();
     rerenderForMode();
   };
   // Reset to DMG whenever a fight is opened.

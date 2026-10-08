@@ -78,6 +78,32 @@ const createMeterUI = ({
     combatPowerEl.className = "combatPower";
     combatPowerEl.style.display = "none";
 
+    // Ajout XIII NRV : le nombre de morts, a cote du pseudo. Un meter tiers
+    // l'affiche ainsi et barbaxou l'a demande. Masque tant que le joueur n'est
+    // pas tombe : une colonne de zeros n'apprend rien.
+    const mortsEl = document.createElement("span");
+    mortsEl.className = "morts";
+    mortsEl.style.display = "none";
+    // La tete de mort est dessinee, pas ecrite. Le caractere Unicode passait
+    // par un echappement CSS (`content: "²0"`) que le minificateur lisait
+    // comme `²` suivi d'un `0` : l'overlay affichait « ²0 2 » au lieu de
+    // « 2 ». Et meme bien echappe, le glyphe depend d'une police qui peut ne
+    // pas l'avoir. Un SVG en clair ne depend de rien — c'est deja la raison
+    // donnee pour le badge de soutien, quelques lignes plus haut.
+    const mortsIcone = document.createElement("span");
+    mortsIcone.className = "mortsIcone";
+    mortsIcone.setAttribute("aria-hidden", "true");
+    mortsIcone.innerHTML =
+      '<svg viewBox="0 0 16 16" width="9" height="9" fill="currentColor" ' +
+      'aria-hidden="true"><path d="M8 1C4.7 1 2 3.5 2 6.6c0 1.9 1 3.6 2.6 4.6v1.6c0 ' +
+      '.7.6 1.2 1.3 1.2h4.2c.7 0 1.3-.5 1.3-1.2v-1.6C13 10.2 14 8.5 14 6.6 14 3.5 ' +
+      '11.3 1 8 1zm-2.3 5.2a1.3 1.3 0 1 1 0 2.6 1.3 1.3 0 0 1 0-2.6zm4.6 0a1.3 1.3 ' +
+      '0 1 1 0 2.6 1.3 1.3 0 0 1 0-2.6zM8 9.4l.8 1.5H7.2L8 9.4z"/></svg>';
+    const mortsNombre = document.createElement("span");
+    mortsNombre.className = "mortsNombre";
+    mortsEl.appendChild(mortsIcone);
+    mortsEl.appendChild(mortsNombre);
+
     const dpsContainer = document.createElement("div");
     const dpsNumber = document.createElement("p");
     dpsContainer.className = "dps";
@@ -92,6 +118,7 @@ const createMeterUI = ({
     contentEl.appendChild(nameEl);
     contentEl.appendChild(supporterBadgeEl);
     contentEl.appendChild(combatPowerEl);
+    contentEl.appendChild(mortsEl);
     contentEl.appendChild(dpsContainer);
     rowEl.appendChild(fillTrackEl);
     rowEl.appendChild(contentEl);
@@ -103,6 +130,8 @@ const createMeterUI = ({
       nameEl,
       supporterBadgeEl,
       combatPowerEl,
+      mortsEl,
+      mortsNombreEl: mortsNombre,
       rankEl,
       dpsContainer,
       classIconEl,
@@ -115,6 +144,7 @@ const createMeterUI = ({
       isVisible: false,
       lastNameText: "",
       lastCombatPowerText: "",
+      lastMortsText: "",
       lastIsCjk: false,
       lastIsSupporter: false,
       lastMetricText: "",
@@ -313,11 +343,33 @@ const createMeterUI = ({
       // le combat. barbaxou l'a demande : la ligne fait trente pixels, et ce
       // chiffre ne change pas d'un combat a l'autre — il encombrait sans
       // informer. Il reste lu et envoye au site, ou il a sa place.
-      const combatPowerText = "";
+      // Ajout XIII NRV : le Combat Power revient a cote du pseudo. Cette
+      // ligne valait la chaine vide depuis qu'il avait ete retire de
+      // l'overlay ; barbaxou le veut de nouveau, comme un meter tiers le
+      // montre. Zero veut dire inconnu — il ne vient que du paquet de groupe —
+      // donc on n'affiche rien plutot qu'un zero trompeur.
+      // Abrégé : « 95 000 » prenait toute la place à côté du pseudo. Deux
+      // décimales, comme un meter tiers l'affiche (« CP : 93,58K »).
+      const cp = Math.trunc(Number(row?.combatPower)) || 0;
+      const combatPowerText =
+        cp >= 1000
+          ? `${(cp / 1000).toFixed(2).replace(".", ",")}K`
+          : cp > 0
+            ? String(cp)
+            : "";
       if (view.lastCombatPowerText !== combatPowerText) {
         view.combatPowerEl.textContent = combatPowerText;
         view.combatPowerEl.style.display = combatPowerText ? "" : "none";
         view.lastCombatPowerText = combatPowerText;
+      }
+
+      const morts = Math.trunc(Number(row?.deaths)) || 0;
+      const mortsText = morts > 0 ? String(morts) : "";
+      if (view.lastMortsText !== mortsText) {
+        view.mortsNombreEl.textContent = mortsText;
+        view.mortsEl.style.display = mortsText ? "" : "none";
+        view.mortsEl.title = mortsText ? `${morts} mort${morts > 1 ? "s" : ""}` : "";
+        view.lastMortsText = mortsText;
       }
 
       if (row.job && !!row.job) {

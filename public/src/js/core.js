@@ -57,6 +57,10 @@ class DpsApp {
       // Ajout XIII NRV : la seconde valeur affichee sur chaque ligne. La
       // premiere reste `displayMode`, que le bouton de l'overlay fait defiler.
       valeurSecondaire: "dpsMeter.valeurSecondaire",
+      // Ajout XIII NRV : la teinte des barres des autres joueurs. Celle des
+      // thèmes est volontairement discrète, et devenait illisible à faible
+      // opacité ; la barre du joueur local, elle, a sa propre couleur.
+      couleurDesAutres: "dpsMeter.couleurDesAutres",
       language: "dpsMeter.language",
       debugLogging: "dpsMeter.debugLoggingEnabled",
       pinMeToTop: "dpsMeter.pinMeToTop",
@@ -101,11 +105,6 @@ class DpsApp {
       "obsidian",
       "varian",
     ];
-    this.supportQrImages = {
-      afdian: "./assets/afdian.png",
-      kofi: "./assets/kofi.png",
-      wechat: "./assets/wechat.png",
-    };
     this.jobColorMap = {
       정령성: "#E06BFF",
       Spiritmaster: "#E06BFF",
@@ -250,6 +249,7 @@ class DpsApp {
     this.targetModeBtn = document.querySelector(".footerBtns .targetModeBtn");
     this.collapseBtn = document.querySelector(".collapseBtn");
     this.metricToggleBtn = document.querySelector(".metricToggleBtn");
+    this.majPastille = document.querySelector(".majPastille");
 
     this.bindHeaderButtons();
     this.bindDragToMoveWindow();
@@ -367,6 +367,12 @@ class DpsApp {
     this._pingTimer = setInterval(() => this.updatePing(), 30000);
 
     this.showTotalDps = this.safeGetSetting(this.storageKeys.showTotalDps) !== "false";
+    this.appliquerCouleurDesAutres(this.couleurDesAutres());
+    // Ajout XIII NRV : demander au site s'il existe une version plus recente.
+    // Rien n'est telecharge ni execute — voir xiiinrv::version cote Rust. Au
+    // demarrage, puis toutes les six heures : le membre n'a plus a surveiller.
+    this.verifierLaVersion();
+    this._majTimer = setInterval(() => this.verifierLaVersion(), 6 * 60 * 60 * 1000);
     // Defaults on: `!== "false"` treats "never set" as enabled.
     this.roundDps = this.safeGetSetting(this.storageKeys.roundDps) !== "false";
     this.meterTotalBar = document.querySelector(".meterTotalBar");
@@ -491,9 +497,6 @@ class DpsApp {
       }
       this.refreshConnectionInfo();
       this.refreshBossLabel();
-      this.updateSupportVisibility(lang);
-      this.updateSupportPrimaryAction(lang);
-      this.updateSupportQrImage(this.supportPrimaryButton?.dataset.support || "afdian");
     });
     // Ajout XIII NRV : la vérification de mise à jour d'A2Tools reste coupée.
     // Elle récupère sur a2tools.app une adresse de MSI, le télécharge et
@@ -658,7 +661,7 @@ class DpsApp {
     if (hadPreviousName) {
       // Character switch means new TCP connection — full refresh resets
       // port detection, backend data, and UI so new damage displays immediately.
-      this.refreshDamageData({ reason: "character switch" });
+      this.refreshDamageData({ reason: "character switch", oublierLesPseudos: true });
     }
     this.setUserName(detectedName, { persist: true, syncBackend: true });
     if (this.characterNameInput && document.activeElement !== this.characterNameInput) {
@@ -757,8 +760,6 @@ class DpsApp {
       window.javaBridge?.resetDps?.();
     }
   }
-
-
 
 
   initHoverTooltip() {
@@ -892,8 +893,6 @@ class DpsApp {
   }
 
 
-
-
   _isAnyPanelOpen() {
     return this.settingsPanel?.classList.contains("isOpen")
       || this.historyUI?.isOpen?.()
@@ -974,6 +973,8 @@ class DpsApp {
       targetMaxHp,
       targetTotalDamage,
       targetCurrentHp,
+      smoothedCurrentHp,
+      hpCoverage,
       dungeonId,
     } = this.buildRowsFromPayload(raw);
     if (this.refreshPending) {
@@ -1101,7 +1102,14 @@ class DpsApp {
       }
       this.elBossName.classList.toggle("isAllTargets", targetMode === "allTargets");
     }
-    this.updateBossHpBar(targetMaxHp, targetTotalDamage, targetCurrentHp);
+    // La barre prend les PV lissés quand ils existent ; le taux de lecture,
+    // lui, continue de se calculer sur la lecture brute côté Rust.
+    this.updateBossHpBar(
+      targetMaxHp,
+      targetTotalDamage,
+      smoothedCurrentHp >= 0 ? smoothedCurrentHp : targetCurrentHp,
+      hpCoverage
+    );
     if (
       nextTargetLabel !== this._lastRenderedTargetLabel ||
       previousTargetName !== targetName ||
@@ -1165,6 +1173,21 @@ class DpsApp {
       ? Number(payload.targetCurrentHp)
       : -1;
 
+    // Ajout XIII NRV : la part des degats reellement subis par la cible que
+    // nous avons comptee. Le jeu donne les PV courants, donc ce que la cible a
+    // perdu est connu ; l'ecart avec ce que nous suivons dit ce qui nous
+    // echappe, pendant le combat et sans rien comparer a la main.
+    // Ajout XIII NRV : les PV comblés entre deux lectures du jeu. Le jeu ne
+    // les envoie que de loin en loin et l'overlay se rafraîchit toutes les
+    // 100 ms, d'où une barre qui descendait par paliers.
+    const smoothedCurrentHp = Number.isFinite(Number(payload?.smoothedCurrentHp))
+      ? Number(payload.smoothedCurrentHp)
+      : -1;
+
+    const hpCoverage = Number.isFinite(Number(payload?.hpCoverage))
+      ? Number(payload.hpCoverage)
+      : null;
+
     return {
       rows,
       targetName,
@@ -1175,6 +1198,8 @@ class DpsApp {
       targetMaxHp,
       targetTotalDamage,
       targetCurrentHp,
+      smoothedCurrentHp,
+      hpCoverage,
       dungeonId,
     };
   }
@@ -1218,6 +1243,9 @@ class DpsApp {
       // buffs, le jeu envoyant les deux dans le meme paquet entre allies.
       const heal = Math.trunc(Number(isObj ? value.heal : 0)) || 0;
 
+      // Ajout XIII NRV : combien de fois ce joueur est tombe pendant le combat.
+      const deaths = Math.trunc(Number(isObj ? value.deaths : 0)) || 0;
+
       rows.push({
         id: String(id),
         name,
@@ -1226,6 +1254,7 @@ class DpsApp {
         totalDamage,
         damageContribution,
         heal,
+        deaths,
         combatPower,
         isUser: name === this.USER_NAME,
         isIdentifying,
@@ -2007,18 +2036,6 @@ class DpsApp {
     this.bossNameSizeValue = document.querySelector(".bossNameSizeValue");
     this.windowOpacityInput = document.querySelector(".windowOpacityInput");
     this.windowOpacityValue = document.querySelector(".windowOpacityValue");
-    this.discordButton = document.querySelector(".discordButton");
-    this.supportWidget = document.querySelector(".supportWidget");
-    this.supportButton = document.querySelector(".supportButton");
-    this.supportModal = document.querySelector("#supportModal");
-    this.supportModalTitle = document.querySelector("#supportModalTitle");
-    this.supportModalClose = document.querySelector(".supportModalClose");
-    this.supportQrImage = document.querySelector(".supportQrImage");
-    this.supportPrimaryButton = document.querySelector(".supportPrimaryButton");
-    this.supportCopyStatus = document.querySelector(".supportCopyStatus");
-    this.supportActionButtons = Array.from(document.querySelectorAll(".supportIconButton"));
-    this.kofiButton = document.querySelector(".kofiButton");
-    this.kofiWidget = document.querySelector(".kofiWidget");
     this.quitButton = document.querySelector(".quitButton");
     this.settingsVersionValue = document.querySelector(".settingsVersionValue");
     this.languageDropdownBtn = document.querySelector(".languageDropdownBtn");
@@ -2455,31 +2472,9 @@ class DpsApp {
       this.resetAllSettings();
     });
 
-    this.discordButton?.addEventListener("click", () => {
-      window.javaBridge?.openBrowser?.("https://discord.gg/Aion2Global");
-    });
 
-    this.supportButton?.addEventListener("click", () => {
-      this.openSupportModal();
-    });
-    this.supportModalClose?.addEventListener("click", () => this.closeSupportModal());
-    this.supportModal?.addEventListener("click", (event) => {
-      if (event.target === this.supportModal) {
-        this.closeSupportModal();
-      }
-    });
-    document.addEventListener("keydown", (event) => {
-      if (event.key !== "Escape") return;
-      if (this.supportModal?.classList.contains("isOpen")) {
-        this.closeSupportModal();
-      }
-    });
-    this.supportActionButtons?.forEach((button) => {
-      button.addEventListener("click", () => this.handleSupportAction(button));
-    });
-
-    this.kofiButton?.addEventListener("click", () => {
-      window.javaBridge?.openBrowser?.("https://ko-fi.com/W7W51T1YW9");
+    this.majPastille?.addEventListener("click", () => {
+      if (this._majPage) window.javaBridge?.openBrowser?.(this._majPage);
     });
 
     this.quitButton?.addEventListener("click", () => {
@@ -2487,163 +2482,18 @@ class DpsApp {
     });
 
     this.updateSettingsVersion();
-    this.updateSupportVisibility(currentLanguage);
-    this.updateSupportPrimaryAction(currentLanguage);
-    this.updateSupportQrImage(this.supportPrimaryButton?.dataset.support || "afdian");
   }
 
-  isChineseLanguage(lang) {
-    return String(lang || "").startsWith("zh");
-  }
+  // Retrait XIII NRV : la fenetre de dons de l'application d'origine et le
+  // bouton vers le salon de discussion de son auteur. Les elements
+  // correspondants avaient deja ete retires de la page, donc ce code ne se
+  // branchait plus a rien ; mais ses adresses restaient dans le binaire livre,
+  // et trois images de dons etaient encore installees chez chaque membre.
+  //
+  // La licence n'exige pas de les garder : ce qu'elle exige, c'est
+  // l'attribution d'auteur, qui est dans le copyright du paquet, le LISEZ-MOI
+  // et la notice d'installation. Le detail est dans docs/suivi/.
 
-  updateSupportVisibility() {
-    if (this.supportWidget) {
-      this.supportWidget.style.display = "flex";
-    }
-    if (this.kofiWidget) {
-      this.kofiWidget.style.display = "none";
-    }
-  }
-
-  getSupportIconSvg(type) {
-    const iconByType = {
-      afdian:
-        '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M13.5 2 5 13h5l-1.5 9L19 10h-5.5L13.5 2z" fill="currentColor"/></svg>',
-      kofi:
-        '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 7h12v7a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5V7z" fill="currentColor"/><path d="M16 9h1.5a2.5 2.5 0 0 1 0 5H16V9z" fill="currentColor" opacity="0.75"/><path d="M6 5h8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none"/></svg>',
-      wechat:
-        '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 4c-3.87 0-7 2.69-7 6 0 1.9 1.03 3.59 2.62 4.69L4 19l3.66-1.85A8.4 8.4 0 0 0 9 17c3.87 0 7-2.69 7-6s-3.13-7-7-7z" fill="currentColor"/><path d="M16.5 10.5c3.04 0 5.5 2.01 5.5 4.5 0 1.42-.79 2.69-2.02 3.52L20.5 22l-2.79-1.41c-.39.08-.79.12-1.21.12-3.04 0-5.5-2.01-5.5-4.5s2.46-4.5 5.5-4.5z" fill="currentColor" opacity="0.78"/></svg>',
-      paypal:
-        '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M7.2 3.2h7.2c3.2 0 5.3 1.9 4.9 4.7-.42 2.85-2.8 4.58-6.1 4.58h-2.4l-.75 4.35H5.9L7.2 3.2z" fill="currentColor"/><path d="M9.3 5.6h4.05c1.3 0 2.05.74 1.83 1.82-.22 1.13-1.2 1.84-2.49 1.84H8.55L9.3 5.6z" fill="currentColor" opacity="0.55"/><path d="M10.55 9.05h2.52c1.95 0 3.2 1.14 2.93 2.86-.3 1.92-1.95 3.12-4.19 3.12h-2.38l.56-3.18h2.2c.75 0 1.23-.4 1.33-1 .1-.56-.3-.93-1.02-.93h-2.15l.2-.87z" fill="#0b2f63" opacity="0.45"/></svg>',
-    };
-    return iconByType[type] || "";
-  }
-
-  updateSupportPrimaryAction(lang) {
-    if (!this.supportPrimaryButton) return;
-    const isChinese = this.isChineseLanguage(lang);
-    const nextSupport = isChinese ? "afdian" : "kofi";
-    const nextUrl = isChinese
-      ? "https://afdian.com/a/hiddencube"
-      : "https://ko-fi.com/hiddencube";
-    const nextLabel = isChinese ? "爱发电" : "Ko-fi";
-    const nextIcon = this.getSupportIconSvg(isChinese ? "afdian" : "kofi");
-    this.supportPrimaryButton.dataset.support = nextSupport;
-    this.supportPrimaryButton.dataset.url = nextUrl;
-    const label = this.supportPrimaryButton.querySelector(".supportLabel");
-    const icon = this.supportPrimaryButton.querySelector(".supportIcon");
-    if (label) label.textContent = nextLabel;
-    if (icon) icon.innerHTML = nextIcon;
-    this.supportPrimaryButton.setAttribute("aria-label", nextLabel);
-    const i18nLabel = isChinese ? "support.aria.afdian" : "support.aria.kofi";
-    this.supportPrimaryButton.dataset.i18nAriaLabel = i18nLabel;
-  }
-
-  openSupportModal() {
-    if (!this.supportModal) return;
-    this.supportModal.classList.add("isOpen");
-    this.supportModal.setAttribute("aria-hidden", "false");
-    if (this.supportCopyStatus) {
-      this.supportCopyStatus.textContent = "";
-    }
-  }
-
-  closeSupportModal() {
-    if (!this.supportModal) return;
-    this.supportModal.classList.remove("isOpen");
-    this.supportModal.setAttribute("aria-hidden", "true");
-  }
-
-  handleSupportAction(button) {
-    if (!button) return;
-    const supportType = button.dataset.support;
-    const url = button.dataset.url;
-    const copyValue = button.dataset.copy;
-    const qrType = button.dataset.qr || supportType;
-
-    if (qrType && this.supportQrImages?.[qrType]) {
-      this.updateSupportQrImage(qrType);
-    }
-
-    if (url) {
-      const externalOnly = supportType === "paypal" || supportType === "afdian" || supportType === "kofi";
-      this.openExternalLink(url, { externalOnly });
-    }
-
-    if (copyValue) {
-      const messageKey = `support.copy.${supportType}`;
-      const fallback = `Copied ${supportType?.toUpperCase?.() || "address"}`;
-      this.copySupportValue(copyValue, this.i18n?.t?.(messageKey, fallback) || fallback);
-    }
-  }
-
-  openExternalLink(url, { externalOnly = false } = {}) {
-    if (!url) return;
-    window.javaBridge?.openBrowser?.(url);
-    if (externalOnly) return;
-    try {
-      window.open(url, "_blank", "noopener");
-    } catch {
-      // ignore
-    }
-  }
-
-  copySupportValue(value, message) {
-    if (!value) return;
-    const showStatus = (text) => {
-      if (!this.supportCopyStatus) return;
-      this.supportCopyStatus.textContent = text;
-    };
-    const attemptLegacyCopy = () => {
-      try {
-        const textarea = document.createElement("textarea");
-        textarea.value = value;
-        textarea.style.position = "fixed";
-        textarea.style.opacity = "0";
-        document.body.appendChild(textarea);
-        textarea.select();
-        const success = document.execCommand("copy");
-        document.body.removeChild(textarea);
-        if (success) showStatus(message);
-      } catch {
-        // ignore
-      }
-    };
-    if (navigator.clipboard?.writeText) {
-      navigator.clipboard
-        .writeText(value)
-        .then(() => showStatus(message))
-        .catch(() => attemptLegacyCopy());
-      return;
-    }
-    attemptLegacyCopy();
-  }
-
-  updateSupportQrImage(type) {
-    if (!this.supportQrImage) return;
-    const src = this.supportQrImages?.[type];
-    if (!src) return;
-    this.supportQrImage.src = src;
-    this.updateSupportTitle(type);
-    this.supportActionButtons?.forEach((button) => {
-      const match = button.dataset.support === type || button.dataset.qr === type;
-      button.classList.toggle("isActive", match);
-    });
-  }
-
-  updateSupportTitle(type) {
-    if (!this.supportModalTitle) return;
-    const currentLanguage = this.i18n?.getLanguage?.();
-    const isChinese = this.isChineseLanguage(currentLanguage);
-    const isWeChat = type === "wechat";
-    const titleKey = isWeChat ? "support.titleWechat" : "support.title";
-    const fallback = isWeChat
-      ? "Support the author on WeChat"
-      : isChinese
-        ? "Support the author on Afdian"
-        : "Support the author on Ko-fi";
-    this.supportModalTitle.textContent = this.i18n?.t?.(titleKey, fallback) || fallback;
-  }
 
   initializeSettingsDropdowns() {
     const previewThemeVars = (themeId) => {
@@ -2785,6 +2635,21 @@ class DpsApp {
       (value) => {
         if (!value) return;
         this.enregistrerValeurSecondaire(value);
+      }
+    );
+
+    // Ajout XIII NRV : la teinte des barres des autres joueurs.
+    setupDropdown(
+      document.querySelector(".couleurAutresDropdownBtn"),
+      document.querySelector(".couleurAutresDropdownMenu"),
+      Object.keys(DpsApp.COULEURS_DES_AUTRES).map((cle) => ({
+        value: cle,
+        label: this.i18n?.t(`mesures.couleur.${cle}`, cle) ?? cle,
+      })),
+      this.couleurDesAutres(),
+      (value) => {
+        if (!value) return;
+        this.appliquerCouleurDesAutres(value, { persist: true });
       }
     );
 
@@ -3967,9 +3832,64 @@ class DpsApp {
 
   // Ajout XIII NRV : les mesures cochees, dans l'ordre d'affichage. Au moins
   // une reste toujours active, sinon le bouton n'aurait plus rien a montrer.
-  static MESURES = ["dps", "totalDamage", "contribution", "heal"];
+  static MESURES = ["dps", "totalDamage", "contribution", "heal", "combatPower"];
 
   // La seconde valeur, celle de droite. « aucune » laisse la place vide.
+  async verifierLaVersion() {
+    const appel = window.__TAURI__?.core?.invoke;
+    if (!appel || !this.majPastille) return;
+    try {
+      const v = await appel("xiiinrv_verifier_version");
+      if (!v || v.a_jour || !v.annoncee) {
+        this.majPastille.style.display = "none";
+        this._majPage = null;
+        return;
+      }
+      this._majPage = v.page || null;
+      const modele = this.i18n?.t("maj.disponible", "Version {v}") ?? "Version {v}";
+      this.majPastille.textContent = modele.replace("{v}", v.annoncee);
+      this.majPastille.title =
+        this.i18n?.t(
+          "maj.aide",
+          "Une version plus recente est disponible. Cliquez pour ouvrir la page de telechargement."
+        ) ?? "";
+      this.majPastille.style.display = this._majPage ? "" : "none";
+    } catch {
+      this.majPastille.style.display = "none";
+    }
+  }
+
+  // Ajout XIII NRV : trois teintes pour les barres des autres joueurs.
+  // « theme » laisse la main au thème choisi, les deux autres sont des
+  // propositions plus lisibles sur fond sombre.
+  static COULEURS_DES_AUTRES = {
+    theme: null,
+    ardoiseClaire: "#7b8ab8",
+    turquoise: "#4fb3a4",
+  };
+
+  couleurDesAutres() {
+    const lu = this.safeGetSetting(this.storageKeys.couleurDesAutres);
+    return Object.prototype.hasOwnProperty.call(DpsApp.COULEURS_DES_AUTRES, lu) ? lu : "theme";
+  }
+
+  appliquerCouleurDesAutres(valeur, { persist = false } = {}) {
+    const choix = Object.prototype.hasOwnProperty.call(DpsApp.COULEURS_DES_AUTRES, valeur)
+      ? valeur
+      : "theme";
+    const teinte = DpsApp.COULEURS_DES_AUTRES[choix];
+    // Une propriete posee sur la racine l'emporte sur celle du theme ; la
+    // retirer rend la main au theme sans avoir a le connaitre.
+    if (teinte) {
+      document.documentElement.style.setProperty("--row-fill", teinte);
+    } else {
+      document.documentElement.style.removeProperty("--row-fill");
+    }
+    if (persist) {
+      this.safeSetSetting(this.storageKeys.couleurDesAutres, choix);
+    }
+  }
+
   valeurSecondaire() {
     const lu = this.safeGetSetting(this.storageKeys.valeurSecondaire);
     if (lu === "aucune") return null;
@@ -3991,12 +3911,14 @@ class DpsApp {
       totalDamage: ["header.display.total", "DMG"],
       contribution: ["header.display.part", "%"],
       heal: ["header.display.heal", "SOINS"],
+      combatPower: ["header.display.cp", "CP"],
     };
     const arias = {
       dps: ["header.display.ariaDps", "Showing DPS"],
       totalDamage: ["header.display.ariaDamage", "Showing total damage"],
       contribution: ["header.display.ariaPart", "Showing damage share"],
       heal: ["header.display.ariaHeal", "Showing healing"],
+      combatPower: ["header.display.ariaCp", "Showing combat power"],
     };
     const [cleLabel, defautLabel] = libelles[this.displayMode] || libelles.dps;
     const [cleAria, defautAria] = arias[this.displayMode] || arias.dps;
@@ -4009,7 +3931,7 @@ class DpsApp {
   // Boss remaining-HP bar. There is no live boss current-HP packet, so remaining
   // is derived from spawn-time max HP minus the damage the meter has tracked
   // against this target. Hidden unless a single boss target with known max HP.
-  updateBossHpBar(maxHp, totalDamage, currentHp) {
+  updateBossHpBar(maxHp, totalDamage, currentHp, hpCoverage = null) {
     if (!this.elBossHpBar) return;
     const max = Number(maxHp) || 0;
     if (max <= 0) {
@@ -4044,7 +3966,28 @@ class DpsApp {
       if (pctEl && amtEl) {
         pctEl.textContent = `${Math.round(pct)}%`;
         amtEl.textContent = `${this.formatAbbreviatedNumber(remaining)} / ${this.formatAbbreviatedNumber(max)}`;
-      } else {
+      }
+      // Ajout XIII NRV : au centre de la barre, la part des degats subis par
+      // la cible que nous avons comptee. Le jeu annonce ses PV courants, donc
+      // ce qu'elle a perdu est connu ; l'ecart avec ce que nous suivons dit ce
+      // qui nous echappe, en direct et sans rien relever a la main. Sa place
+      // est ici : la barre se reecrit a chaque rafraichissement, alors que le
+      // nom de la cible declencherait un reajustement de police a chaque fois.
+      const luEl = this.elBossHpText.querySelector(".bossHpLu");
+      if (luEl) {
+        const lu = Number(hpCoverage);
+        const connu = Number.isFinite(lu) && lu > 0;
+        luEl.textContent = connu ? `${Math.round(lu)} % lus` : "";
+        // En dessous de 90 %, des coups nous echappent : on le signale.
+        luEl.classList.toggle("estBas", connu && lu < 90);
+        luEl.title = connu
+          ? this.i18n?.t(
+              "meter.couvertureAide",
+              "Part des degats subis par la cible que le meter a comptes."
+            ) ?? ""
+          : "";
+      }
+      if (!(pctEl && amtEl)) {
         this.elBossHpText.textContent = `${this.formatAbbreviatedNumber(remaining)} · ${Math.round(pct)}%`;
       }
     }
@@ -4085,7 +4028,7 @@ class DpsApp {
       : this.dpsFormatter.format(Math.round(n));
   }
 
-  refreshDamageData({ reason = "refresh" } = {}) {
+  refreshDamageData({ reason = "refresh", oublierLesPseudos = false } = {}) {
     this.refreshPending = true;
     this.refreshPendingStartedAt = this.nowMs();
     this.lastSnapshot = null;
@@ -4119,7 +4062,7 @@ class DpsApp {
       }
     }
 
-    window.javaBridge?.resetDps?.();
+    window.javaBridge?.resetDps?.({ oublierLesPseudos });
     window.javaBridge?.restartTargetSelection?.();
     this.logDebug(`Damage data refreshed (${reason}).`);
   }
@@ -4161,6 +4104,11 @@ class DpsApp {
     // pas de boucle.
     if (key === "dpsMeter.valeurSecondaire") {
       this.renderCurrentRows();
+      return;
+    }
+
+    if (key === "dpsMeter.couleurDesAutres") {
+      this.appliquerCouleurDesAutres(value, { persist: false });
       return;
     }
 
@@ -4208,6 +4156,14 @@ class DpsApp {
       const part = Number(row?.damageContribution);
       const valeur = Number.isFinite(part) ? part : 0;
       return { value: valeur, text: `${valeur.toFixed(1)} %` };
+    }
+    // Ajout XIII NRV : le Combat Power, celui que le jeu annonce dans le
+    // paquet de composition du groupe. Il n'existe donc que pour les membres
+    // du groupe : zero veut dire « inconnu », pas « nul », et une ligne sans
+    // valeur ne doit pas afficher 0 comme si c'etait une mesure.
+    if (mesure === "combatPower") {
+      const cp = Math.trunc(Number(row?.combatPower)) || 0;
+      return { value: cp, text: cp > 0 ? this.dpsFormatter.format(cp) : "—" };
     }
     if (mesure === "heal") {
       const soins = Number(row?.heal) || 0;

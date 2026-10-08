@@ -182,7 +182,6 @@
     },
     "debugLogging": "Ativar registro de depuração",
     "quit": "Sair",
-    "discord": "Discord",
     "version": "Versão",
     "theme": {
       "label": "Tema",
@@ -273,29 +272,6 @@
       "working": "Aguardando aprovação…",
       "failed": "Falha ao entrar: {error}",
       "supporter": "Apoiador"
-    }
-  },
-  "support": {
-    "button": "Me apoie",
-    "title": "Apoie o autor no Ko-fi",
-    "titleWechat": "Apoie o autor no WeChat",
-    "label": {
-      "wechat": "WeChat"
-    },
-    "copy": {
-      "btc": "Endereço BTC copiado",
-      "eth": "Endereço ETH copiado",
-      "usdc": "Endereço USDC copiado"
-    },
-    "aria": {
-      "afdian": "Abrir o Afdian",
-      "kofi": "Abrir o Ko-fi",
-      "close": "Fechar a janela de apoio",
-      "wechat": "Mostrar o QR code do WeChat",
-      "paypal": "Abrir o PayPal",
-      "btc": "Copiar o endereço BTC",
-      "eth": "Copiar o endereço ETH",
-      "usdc": "Copiar o endereço USDC"
     }
   },
   "battleTime": {

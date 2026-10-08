@@ -1,15 +1,3 @@
-@keyframes a2toolsPulse {
-  0% { transform: scale(0.85); opacity: 0; }
-  50% { transform: scale(1.05); }
-  100% { transform: scale(1); opacity: 1; }
-}
-
-@keyframes a2toolsShimmer {
-  0% { background-position: 0% 50%; }
-  50% { background-position: 100% 50%; }
-  100% { background-position: 0% 50%; }
-}
-
 :root {
   /* Bars */
   --row-fill: #5fbf87;
@@ -630,6 +618,10 @@ html:lang(zh-Hant), html:lang(zh-Hant) body {
   pointer-events: none;
 }
 .bossHpText .bossHpAmt { color: rgba(255, 255, 255, 0.72); }
+/* Ajout XIII NRV : la part des degats subis que nous avons comptee. Plus
+   discrete que les deux autres : c'est un controle, pas une mesure de jeu. */
+.bossHpText .bossHpLu { color: rgba(255, 255, 255, 0.5); }
+.bossHpText .bossHpLu.estBas { color: rgba(255, 196, 92, 0.95); }
 
 /* ---------- player rows ---------- */
 
@@ -671,6 +663,11 @@ html:lang(zh-Hant), html:lang(zh-Hant) body {
   top: 0;
   bottom: 0;
   width: 0;
+  /* Ajout XIII NRV : la barre glisse au lieu de sauter. L'overlay se
+     rafraîchit toutes les 100 ms ; une transition un peu plus longue que
+     l'intervalle enchaîne les pas sans jamais s'arrêter, et le mouvement part
+     bien de la gauche puisque la barre grandit par sa largeur. */
+  transition: width 160ms linear;
   opacity: var(--meter-fill-opacity, 0.8);
   background: linear-gradient(
     90deg,
@@ -873,6 +870,28 @@ html:lang(zh-Hant), html:lang(zh-Hant) body {
    moves the target: measured, the same nudge overshoots by 1px there. The
    combat power is always the name's next sibling, so it can be corrected
    per-row without the JS having to know. */
+/* Ajout XIII NRV : le compteur de morts, precede d'une tete de mort. Masque
+   tant que le joueur n'est pas tombe. */
+.list .item .morts {
+  flex: 0 0 auto;
+  font-family: var(--hud-tech);
+  font-variant-numeric: tabular-nums;
+  font-variation-settings: "wght" 700, "wdth" 75;
+  font-size: 10px;
+  line-height: 1;
+  color: rgba(255, 120, 120, 0.95);
+}
+.list .item .morts {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.list .item .morts .mortsIcone {
+  display: inline-flex;
+  opacity: 0.85;
+}
+.meter.slim .list .item .morts { font-size: 9px; }
+
 .list .item .name.isCjk + .combatPower {
   top: 0.5px;
 }
@@ -1866,11 +1885,9 @@ body.mainPlayerNamesBold .settingsPanel .themeDropdownMenu .settingsDropdownItem
   cursor: pointer;
 }
 
-/* One geometry for the three outbound links; only the fill tells them
-   apart, and none of them is louder than the panel it sits in. */
-.settingsPanel .discordButton,
-.settingsPanel .supportButton,
-.settingsPanel .a2toolsButton,
+/* Retrait XIII NRV : les trois boutons sortants d'A2Tools (Discord de son
+   auteur, dons, site a2tools.app) n'existent plus dans la page. Il ne reste
+   que le bouton Quitter, qui garde cette geometrie. */
 .settingsPanel .quitButton {
   height: 28px;
   box-sizing: border-box;
@@ -1889,40 +1906,6 @@ body.mainPlayerNamesBold .settingsPanel .themeDropdownMenu .settingsDropdownItem
   cursor: pointer;
   transition: filter 120ms ease, background 120ms ease, border-color 120ms ease;
 }
-.settingsPanel .discordButton {
-  background: #5865f2;
-}
-.settingsPanel .supportButton {
-  background: linear-gradient(90deg, #7f5fe8, #6f4cd8);
-}
-.settingsPanel .a2toolsButton {
-  background: linear-gradient(135deg, #6366f1, #8b5cf6, #ec4899, #6366f1);
-  background-size: 300% 300%;
-  animation: a2toolsShimmer 6s ease infinite;
-}
-.settingsPanel .discordButton:hover,
-.settingsPanel .supportButton:hover,
-.settingsPanel .a2toolsButton:hover {
-  filter: brightness(1.12);
-}
-.settingsPanel .discordButton .discordIcon,
-.settingsPanel .supportButton .supportIcon {
-  display: inline-flex;
-  align-items: center;
-  flex-shrink: 0;
-  width: 15px;
-  height: 15px;
-}
-.settingsPanel .discordButton .discordIcon svg {
-  width: 100%;
-  height: 100%;
-  fill: currentColor;
-}
-.settingsPanel .supportButton .supportIcon svg {
-  width: 100%;
-  height: 100%;
-}
-
 /* Quit is destructive, so it is outlined rather than filled — present,
    but never the brightest thing in the footer. */
 .settingsPanel .quitButton {
@@ -1937,7 +1920,6 @@ body.mainPlayerNamesBold .settingsPanel .themeDropdownMenu .settingsDropdownItem
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .settingsPanel .a2toolsButton { animation: none; }
   .settingsPanel .keybindBtn.recording { animation: none; }
   .settingsPanel .settingsToggleTrack::after { transition: none; }
 }
@@ -3077,6 +3059,28 @@ body.legacyUi .meter .item .content .name.isSupporter,
   }
 }
 
+/* Ajout XIII NRV : la pastille de mise a jour disponible. */
+.meterFooter .majPastille {
+  flex: 0 0 auto;
+  margin: 0 6px;
+  padding: 0 7px;
+  height: 16px;
+  border: 1px solid rgba(255, 196, 92, 0.55);
+  border-radius: 8px;
+  background: rgba(255, 196, 92, 0.12);
+  color: rgba(255, 210, 130, 0.95);
+  font-family: var(--hud-tech);
+  font-variation-settings: "wght" 700, "wdth" 87.5;
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+.meterFooter .majPastille:hover {
+  background: rgba(255, 196, 92, 0.24);
+}
+
 .updateModal {
   position: fixed;
   inset: 0;
@@ -3173,8 +3177,6 @@ body.legacyUi .meter .item .content .name.isSupporter,
 }
 
 /* Compatibility: flatten nested rules for environments without CSS nesting support. */
-
-
 
 
 .detailsPanel.open {
@@ -3951,6 +3953,23 @@ body.legacyUi .meter .item .content .name.isSupporter,
   position: relative;
   z-index: 1;
 }
+/* Ajout XIII NRV : en mode Soins, les colonnes que le jeu ne renseigne pas
+   disparaissent. Elles n'affichaient que des zeros. */
+.detailsPanel.soins-sans-mhit .detailsSkills .cell.mhit { display: none; }
+.detailsPanel.soins-sans-mdmg .detailsSkills .cell.mdmg { display: none; }
+.detailsPanel.soins-sans-crit .detailsSkills .cell.crit { display: none; }
+.detailsPanel.soins-sans-parry .detailsSkills .cell.parry { display: none; }
+.detailsPanel.soins-sans-perfect .detailsSkills .cell.perfect { display: none; }
+.detailsPanel.soins-sans-double .detailsSkills .cell.double { display: none; }
+.detailsPanel.soins-sans-back .detailsSkills .cell.back { display: none; }
+.detailsPanel.soins-sans-frontal .detailsSkills .cell.frontal { display: none; }
+.detailsPanel.soins-sans-powershard .detailsSkills .cell.powershard { display: none; }
+.detailsPanel.soins-sans-regen .detailsSkills .cell.regen { display: none; }
+.detailsPanel.soins-sans-mindmg .detailsSkills .cell.mindmg { display: none; }
+.detailsPanel.soins-sans-maxdmg .detailsSkills .cell.maxdmg { display: none; }
+/* La legende, sous la note : meme taille, meme police. */
+.detailsPanel .detailsSkills .detailsLegende { opacity: 0.55; }
+
 .detailsPanel .detailsSkills .detailsFootnote {
   font-size: 0.85em;
   opacity: 0.6;
@@ -4198,153 +4217,7 @@ body.legacyUi .meter .item .content .name.isSupporter,
   margin-top: 16px;
   text-align: center;
   font-size: 14px;
-}
-.supportModal {
-  display: none;
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.6);
-  z-index: 8;
-  align-items: center;
-  justify-content: center;
-  padding: 16px;
-}
-.supportModal.isOpen {
-  display: flex;
-}
-.supportModal .supportModalCard {
-  width: min(360px, 95vw);
-  border-radius: 18px;
-  background: rgb(12, 22, 40);
-  padding: 20px;
-  color: white;
-  position: relative;
-  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.45);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 16px;
-}
-.supportModal .supportModalTitle {
-  font-size: 18px;
-  font-weight: 700;
-  text-align: center;
-}
-.supportModal .supportModalClose {
-  position: absolute;
-  top: 10px;
-  right: 12px;
-  border: none;
-  background: rgba(255, 255, 255, 0.12);
-  color: white;
-  border-radius: 999px;
-  width: 28px;
-  height: 28px;
-  cursor: pointer;
-  font-size: 18px;
-  line-height: 1;
-}
-.supportModal .supportQrContainer {
-  background: white;
-  border-radius: 16px;
-  padding: 12px;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12);
-}
-.supportModal .supportQrImage {
-  width: 220px;
-  height: 220px;
-  object-fit: contain;
-  border-radius: 12px;
-  background: white;
-}
-.supportModal .supportActions {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-  width: 100%;
-}
-.supportModal .supportIconButton {
-  border: none;
-  background: rgba(255, 255, 255, 0.08);
-  color: white;
-  border-radius: 10px;
-  padding: 10px 8px;
-  cursor: pointer;
-  font-size: 17px;
-  font-weight: 700;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  transition: transform 0.15s ease, background 0.15s ease;
-}
-.supportModal .supportIconButton:hover {
-  transform: translateY(-1px);
-  background: rgba(255, 255, 255, 0.16);
-}
-.supportModal .supportIconButton.isActive {
-  background: rgba(143, 106, 243, 0.35);
-  box-shadow: 0 0 0 1px rgba(143, 106, 243, 0.45);
-}
-.supportModal .supportIcon {
-  width: 18px;
-  height: 18px;
-  line-height: 1;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
-}
-.supportModal .supportIcon svg {
-  width: 100%;
-  height: 100%;
-  display: block;
-}
-.supportModal .supportLabel {
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-}
-.supportModal .supportIconButton[data-support="afdian"] {
-  background: linear-gradient(90deg, #7f5fe8, #6f4cd8);
-  color: #ffffff;
-}
-.supportModal .supportIconButton[data-support="wechat"] {
-  background: rgba(16, 187, 89, 0.2);
-  color: #8df0b6;
-}
-.supportModal .supportIconButton[data-support="paypal"] {
-  background: rgba(0, 112, 186, 0.2);
-  color: #8fc9ff;
-}
-.supportModal .supportIconButton[data-support="kofi"] {
-  background: linear-gradient(90deg, #7f5fe8, #6f4cd8);
-  color: #ffffff;
-}
-.supportModal .supportIconButton[data-support="btc"] {
-  background: rgba(247, 147, 26, 0.22);
-  color: #ffd0a1;
-}
-.supportModal .supportIconButton[data-support="eth"] {
-  background: rgba(98, 126, 234, 0.22);
-  color: #c2d2ff;
-}
-.supportModal .supportIconButton[data-support="usdc"] {
-  background: rgba(39, 117, 202, 0.22);
-  color: #bcd8ff;
-}
-.supportModal .supportCopyStatus {
-  min-height: 18px;
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.8);
-  text-align: center;
-}
-
-
-.windowDragFreeze {
+}.windowDragFreeze {
   -webkit-user-select: none !important;
   user-select: none !important;
   pointer-events: none !important;
@@ -4457,8 +4330,6 @@ body.legacyUi .meter .item .content .name.isSupporter,
 }
 
 /* ========== Slim Mode ========== */
-
-
 
 
 /* ============================================================

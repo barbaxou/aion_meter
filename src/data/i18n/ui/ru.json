@@ -182,7 +182,6 @@
     },
     "debugLogging": "Включить отладочный журнал",
     "quit": "Выход",
-    "discord": "Discord",
     "version": "Версия",
     "theme": {
       "label": "Тема",
@@ -273,29 +272,6 @@
       "working": "Ожидание подтверждения…",
       "failed": "Не удалось войти: {error}",
       "supporter": "Спонсор"
-    }
-  },
-  "support": {
-    "button": "Поддержать",
-    "title": "Поддержать автора на Ko-fi",
-    "titleWechat": "Поддержать автора через WeChat",
-    "label": {
-      "wechat": "WeChat"
-    },
-    "copy": {
-      "btc": "BTC-адрес скопирован",
-      "eth": "ETH-адрес скопирован",
-      "usdc": "USDC-адрес скопирован"
-    },
-    "aria": {
-      "afdian": "Открыть Afdian",
-      "kofi": "Открыть Ko-fi",
-      "close": "Закрыть окно поддержки",
-      "wechat": "Показать QR-код WeChat",
-      "paypal": "Открыть PayPal",
-      "btc": "Скопировать BTC-адрес",
-      "eth": "Скопировать ETH-адрес",
-      "usdc": "Скопировать USDC-адрес"
     }
   },
   "battleTime": {

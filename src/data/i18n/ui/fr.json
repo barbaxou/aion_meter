@@ -11,7 +11,9 @@
       "part": "%",
       "heal": "SOINS",
       "ariaPart": "Affiche la part des dégâts",
-      "ariaHeal": "Affiche les soins"
+      "ariaHeal": "Affiche les soins",
+      "cp": "CP",
+      "ariaCp": "Affiche le Combat Power"
     },
     "reduire": "Réduire",
     "fermer": "Fermer"
@@ -83,7 +85,11 @@
       "avgDmg": "Moy",
       "avgDmgTooltip": "Dégâts moyens",
       "maxDmg": "Max",
-      "maxDmgTooltip": "Dégâts max."
+      "maxDmgTooltip": "Dégâts max.",
+      "ticks": "Tics",
+      "heal": "Soins",
+      "healPct": "S%",
+      "avgHeal": "Moy"
     },
     "stats": {
       "backRate": "Taux d'attaque dans le dos",
@@ -127,7 +133,9 @@
     },
     "refresh": {
       "loading": "Chargement…"
-    }
+    },
+    "legendeDegats": "Lancers : nombre de coups · DGT : dégâts totaux · D% : part des dégâts de ce joueur · MC% : part des lancers ayant touché plusieurs fois · DCM : dégâts de ces coups multiples · CRIT, PAR, PARF, DBL : taux de critique, de parade, de parfait et de double · DOS, FACE : taux d'attaque dans le dos et de face · MIN, MOY, MAX : le coup le plus faible, le coup moyen et le plus fort.",
+    "legendeSoins": "Tics : nombre de soins appliqués · SOINS : total soigné · S% : part des soins de ce joueur · MOY : soin moyen par tic. Le jeu n'envoie ni critique, ni minimum, ni maximum sur les soins : ces colonnes sont masquées plutôt qu'affichées à zéro. Attention, ce total mêle soins et buffs — le jeu envoie les deux dans le même paquet entre alliés."
   },
   "history": {
     "title": "Historique des combats",
@@ -207,7 +215,6 @@
     },
     "debugLogging": "Activer la journalisation de débogage",
     "quit": "Quitter",
-    "discord": "Discord",
     "version": "Version",
     "theme": {
       "label": "Thème",
@@ -288,29 +295,6 @@
     "showSupporterColors": "Afficher les couleurs des soutiens",
     "showSupporterColorsHint": "Le nom des soutiens s'affiche en doré. Purement esthétique — aucun chiffre n'est modifié."
   },
-  "support": {
-    "button": "Me soutenir",
-    "title": "Soutenir l'auteur sur Ko-fi",
-    "titleWechat": "Soutenir l'auteur sur WeChat",
-    "label": {
-      "wechat": "WeChat"
-    },
-    "copy": {
-      "btc": "Adresse BTC copiée",
-      "eth": "Adresse ETH copiée",
-      "usdc": "Adresse USDC copiée"
-    },
-    "aria": {
-      "afdian": "Ouvrir Afdian",
-      "kofi": "Ouvrir Ko-fi",
-      "close": "Fermer la fenêtre de soutien",
-      "wechat": "Afficher le QR code WeChat",
-      "paypal": "Ouvrir PayPal",
-      "btc": "Copier l'adresse BTC",
-      "eth": "Copier l'adresse ETH",
-      "usdc": "Copier l'adresse USDC"
-    }
-  },
   "battleTime": {
     "analysing": "Surveillance des données...",
     "idle": "Inactif",
@@ -319,7 +303,8 @@
   },
   "meter": {
     "identifyingPlayer": "#{id}",
-    "dpsSuffix": "/s"
+    "dpsSuffix": "/s",
+    "couvertureAide": "Part des dégâts subis par la cible que le meter a comptés. Nettement sous 100 % : des coups nous échappent."
   },
   "skills": {
     "fallback": "Compétence {code}",
@@ -379,7 +364,9 @@
     "token": "Jeton personnel",
     "tokenPlaceholder": "collez ici le jeton donné par le site",
     "unavailable": "État indisponible",
-    "waiting": "En attente : entrez en jeu, le meter lira la fiche de votre personnage."
+    "waiting": "En attente : entrez en jeu, le meter lira la fiche de votre personnage.",
+    "tokenSet": "Jeton enregistré — collez-en un autre pour le remplacer",
+    "tokenNone": "Collez ici le jeton donné par la guilde"
   },
   "mesures": {
     "titre": "Affichage de l'overlay",
@@ -391,6 +378,20 @@
     "contribution": "Part des dégâts",
     "heal": "Soins",
     "aucune": "Aucune",
-    "soinsAide": "Les soins comptent aussi les buffs : le jeu envoie les deux dans le même paquet entre alliés, et rien ne permet de les séparer pour l'instant."
+    "soinsAide": "Les soins comptent aussi les buffs : le jeu envoie les deux dans le même paquet entre alliés, et rien ne permet de les séparer pour l'instant.",
+    "combatPower": "Combat Power",
+    "couleurDesAutres": "Couleur des autres joueurs",
+    "couleur": {
+      "theme": "Celle du thème",
+      "ardoiseClaire": "Ardoise claire",
+      "turquoise": "Turquoise"
+    }
+  },
+  "npcap": {
+    "manquant": "Npcap est nécessaire pour lire le trafic du jeu, et il n'est pas installé.\n\nPendant son installation, DÉCOCHEZ la case\n« Restrict Npcap driver's access to Administrators only »,\nsinon le meter devra être lancé en administrateur.\n\nOuvrir la page de téléchargement ?"
+  },
+  "maj": {
+    "aide": "Une version plus récente est disponible. Cliquez pour ouvrir la page de téléchargement de la guilde.",
+    "disponible": "Version {v}"
   }
 }

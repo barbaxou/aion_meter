@@ -182,7 +182,6 @@
     },
     "debugLogging": "Debug-Logging aktivieren",
     "quit": "Beenden",
-    "discord": "Discord",
     "version": "Version",
     "theme": {
       "label": "Design",
@@ -273,29 +272,6 @@
       "working": "Warte auf Bestätigung…",
       "failed": "Anmeldung fehlgeschlagen: {error}",
       "supporter": "Unterstützer"
-    }
-  },
-  "support": {
-    "button": "Unterstütze mich",
-    "title": "Unterstütze den Autor auf Ko-fi",
-    "titleWechat": "Unterstütze den Autor über WeChat",
-    "label": {
-      "wechat": "WeChat"
-    },
-    "copy": {
-      "btc": "BTC-Adresse kopiert",
-      "eth": "ETH-Adresse kopiert",
-      "usdc": "USDC-Adresse kopiert"
-    },
-    "aria": {
-      "afdian": "Afdian öffnen",
-      "kofi": "Ko-fi öffnen",
-      "close": "Unterstützungsfenster schließen",
-      "wechat": "WeChat-QR-Code anzeigen",
-      "paypal": "PayPal öffnen",
-      "btc": "BTC-Adresse kopieren",
-      "eth": "ETH-Adresse kopieren",
-      "usdc": "USDC-Adresse kopieren"
     }
   },
   "battleTime": {

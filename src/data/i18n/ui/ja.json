@@ -182,7 +182,6 @@
     },
     "debugLogging": "デバッグログを有効にする",
     "quit": "終了",
-    "discord": "Discord",
     "version": "バージョン",
     "theme": {
       "label": "テーマ",
@@ -273,29 +272,6 @@
       "working": "承認を待っています…",
       "failed": "サインインに失敗しました: {error}",
       "supporter": "サポーター"
-    }
-  },
-  "support": {
-    "button": "支援する",
-    "title": "Ko-fiで作者を支援",
-    "titleWechat": "WeChatで作者を支援",
-    "label": {
-      "wechat": "WeChat"
-    },
-    "copy": {
-      "btc": "BTCアドレスをコピーしました",
-      "eth": "ETHアドレスをコピーしました",
-      "usdc": "USDCアドレスをコピーしました"
-    },
-    "aria": {
-      "afdian": "Afdianを開く",
-      "kofi": "Ko-fiを開く",
-      "close": "支援ウィンドウを閉じる",
-      "wechat": "WeChatのQRコードを表示",
-      "paypal": "PayPalを開く",
-      "btc": "BTCアドレスをコピー",
-      "eth": "ETHアドレスをコピー",
-      "usdc": "USDCアドレスをコピー"
     }
   },
   "battleTime": {

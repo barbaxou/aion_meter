@@ -11,7 +11,9 @@
       "part": "%",
       "heal": "HEAL",
       "ariaPart": "Showing damage share",
-      "ariaHeal": "Showing healing"
+      "ariaHeal": "Showing healing",
+      "cp": "CP",
+      "ariaCp": "Showing combat power"
     },
     "reduire": "Minimize",
     "fermer": "Close"
@@ -83,7 +85,11 @@
       "avgDmg": "Avg",
       "avgDmgTooltip": "Avg Damage",
       "maxDmg": "Max",
-      "maxDmgTooltip": "Max Damage"
+      "maxDmgTooltip": "Max Damage",
+      "ticks": "Ticks",
+      "heal": "Heal",
+      "healPct": "H%",
+      "avgHeal": "Avg"
     },
     "stats": {
       "backRate": "Back Attack Rate",
@@ -127,7 +133,9 @@
     },
     "refresh": {
       "loading": "Loading…"
-    }
+    },
+    "legendeDegats": "Casts: number of hits · Dmg: total damage · D%: this player's share of the damage · MH%: share of casts that hit more than once · MHD: damage from those multi-hits · Crit, Par, Perf, Dbl: critical, parry, perfect and double rates · Back, Front: back- and front-attack rates · Min, Avg, Max: weakest, average and strongest hit.",
+    "legendeSoins": "Ticks: number of heals applied · Heal: total healed · H%: this player's share of the healing · Avg: average heal per tick. The game sends no crit, minimum or maximum for heals, so those columns are hidden rather than shown as zero. Note this total mixes healing and buffs — the game sends both in the same packet between allies."
   },
   "history": {
     "title": "Battle History",
@@ -207,7 +215,6 @@
     },
     "debugLogging": "Enable debug logging",
     "quit": "Quit",
-    "discord": "Discord",
     "version": "Version",
     "theme": {
       "label": "Theme",
@@ -288,29 +295,6 @@
     "showSupporterColors": "Show supporter colours",
     "showSupporterColorsHint": "Supporters' names render gold. Cosmetic only — it never changes any number."
   },
-  "support": {
-    "button": "Support Me",
-    "title": "Support the author on Ko-fi",
-    "titleWechat": "Support the author on WeChat",
-    "label": {
-      "wechat": "WeChat"
-    },
-    "copy": {
-      "btc": "BTC address copied",
-      "eth": "ETH address copied",
-      "usdc": "USDC address copied"
-    },
-    "aria": {
-      "afdian": "Open Afdian",
-      "kofi": "Open Ko-fi",
-      "close": "Close support modal",
-      "wechat": "Show WeChat QR code",
-      "paypal": "Open PayPal",
-      "btc": "Copy BTC address",
-      "eth": "Copy ETH address",
-      "usdc": "Copy USDC address"
-    }
-  },
   "battleTime": {
     "analysing": "Monitoring data...",
     "idle": "Idle",
@@ -319,7 +303,8 @@
   },
   "meter": {
     "identifyingPlayer": "#{id}",
-    "dpsSuffix": "/s"
+    "dpsSuffix": "/s",
+    "couvertureAide": "Share of the damage the target took that the meter counted. Well under 100% means hits are escaping us."
   },
   "skills": {
     "fallback": "Skill {code}",
@@ -379,7 +364,9 @@
     "token": "Personal token",
     "tokenPlaceholder": "paste the token given by the website",
     "unavailable": "Status unavailable",
-    "waiting": "Waiting: log in with your character and the meter will read its sheet."
+    "waiting": "Waiting: log in with your character and the meter will read its sheet.",
+    "tokenSet": "Token saved — paste another one to replace it",
+    "tokenNone": "Paste the token the guild gave you"
   },
   "mesures": {
     "titre": "Overlay display",
@@ -391,6 +378,20 @@
     "contribution": "Damage share",
     "heal": "Healing",
     "aucune": "None",
-    "soinsAide": "Healing also counts buffs: the game sends both in the same packet between allies, and nothing lets us tell them apart yet."
+    "soinsAide": "Healing also counts buffs: the game sends both in the same packet between allies, and nothing lets us tell them apart yet.",
+    "combatPower": "Combat power",
+    "couleurDesAutres": "Other players’ bar colour",
+    "couleur": {
+      "theme": "From the theme",
+      "ardoiseClaire": "Light slate",
+      "turquoise": "Teal"
+    }
+  },
+  "npcap": {
+    "manquant": "Npcap is required to read the game's traffic, and it is not installed.\n\nWhile installing it, UNTICK\n“Restrict Npcap driver's access to Administrators only”,\notherwise the meter will have to be run as administrator.\n\nOpen the download page?"
+  },
+  "maj": {
+    "aide": "A newer version is available. Click to open the guild's download page.",
+    "disponible": "Version {v}"
   }
 }
