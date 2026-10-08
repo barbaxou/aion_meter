@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "XIII NRV Meter",
-  "version": "2.0.66",
+  "version": "2.0.79",
   "identifier": "gg.xiiinrv.meter",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -29,7 +29,9 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["msi"],
+    "targets": [
+      "msi"
+    ],
     "resources": [
       "../src/data"
     ],
@@ -54,6 +56,11 @@
         ],
         "postInstallScript": "../packaging/linux/postinst.sh"
       }
-    }
+    },
+    "publisher": "XIII NRV",
+    "copyright": "© taengu — A2Tools DPS Meter. © 2026 XIII NRV — version modifiée. Sous licence GPL-3.0.",
+    "shortDescription": "Meter de combat AION 2 de la guilde XIII NRV",
+    "longDescription": "Version modifiée d'A2Tools DPS Meter (GPL-3.0) pour la guilde XIII NRV. Lit le trafic du jeu avec Npcap pour afficher les dégâts, les soins et le déroulé des combats, et peut envoyer la fiche du personnage au site de la guilde quand le membre fournit son jeton. Npcap doit être installé séparément.",
+    "licenseFile": "../LICENSE"
   }
 }
