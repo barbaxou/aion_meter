@@ -62,3 +62,9 @@ settings.properties
 /packaging/arch/src/
 /packaging/arch/pkg/
 /packaging/arch/*.pkg.tar.zst
+
+# Ajout XIII NRV : l'installateur publie sur le site de la guilde. Le depot
+# porte le source, pas les binaires — un MSI de 7,5 Mo par version ferait
+# grossir l'historique sans rien apporter. La licence exige le source, et c'est
+# lui qui est ici.
+/docs/site/*.msi
