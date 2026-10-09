@@ -79,5 +79,8 @@ settings.properties
 # la licence, la mention de modification, et la notice destinée aux membres.
 /docs/suivi/
 /docs/site/
+# ...sauf version.json, qui est a la racine : il ne contient qu'un numero et
+# trois adresses, et il doit etre lisible publiquement pour que la page du site
+# et le meter sachent ou en est la derniere version.
 /outils/
 /.vscode/

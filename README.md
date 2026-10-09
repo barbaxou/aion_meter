@@ -17,8 +17,7 @@ les soins, le déroulé des combats et leur historique.
 **Tu n'as pas besoin de ce dépôt pour utiliser le meter.** Il contient le code
 source ; le programme prêt à installer est sur le site de la guilde.
 
-➜ **Page de téléchargement et notice d'installation : demande le lien à la
-guilde.**
+➜ **[Télécharger la dernière version](https://github.com/barbaxou/aion_meter/releases/latest)**
 
 La notice complète est aussi lisible ici : [docs/INSTALLATION.md](docs/INSTALLATION.md).
 Elle couvre Npcap, l'avertissement Windows, le partage de fiche et le

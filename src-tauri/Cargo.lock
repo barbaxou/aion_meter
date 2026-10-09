@@ -5982,7 +5982,7 @@ dependencies = [
 
 [[package]]
 name = "xiiinrv-meter"
-version = "2.0.79"
+version = "2.0.80"
 dependencies = [
  "chrono",
  "flate2",

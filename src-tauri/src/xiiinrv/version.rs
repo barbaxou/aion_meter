@@ -27,6 +27,20 @@ use serde::{Deserialize, Serialize};
 /// Clé de réglage : l'adresse du fichier de version. Vide, rien n'est vérifié.
 pub const CLE_URL_VERSION: &str = "xiiinrv_url_version";
 
+/// Où le fichier de version est publié, faute de réglage.
+///
+/// L'adresse « raw » du dépôt, pas celle d'une release : vérifié le
+/// 09/10/2026, un fichier de release redirige vers une adresse signée sans
+/// en-tête CORS, que la page du site ne pourrait pas lire. Le meter, lui, s'en
+/// moque — mais les deux lisent le même fichier, et il n'y a qu'une adresse à
+/// tenir.
+///
+/// Ne marche que sur un dépôt public : la requête ne porte aucun jeton. Sur un
+/// dépôt privé, GitHub répond 404 et la vérification conclut « à jour », sans
+/// bruit.
+pub const URL_VERSION_PAR_DEFAUT: &str =
+    "https://raw.githubusercontent.com/barbaxou/aion_meter/xiiinrv/version.json";
+
 /// Ce que le site annonce.
 #[derive(Debug, Clone, Deserialize)]
 struct Annonce {

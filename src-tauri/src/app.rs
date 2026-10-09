@@ -330,7 +330,11 @@ fn xiiinrv_enregistrer_jeton(
 async fn xiiinrv_verifier_version(
     state: tauri::State<'_, AppState>,
 ) -> Result<crate::xiiinrv::version::Verdict, String> {
-    let url = state.settings.get(crate::xiiinrv::version::CLE_URL_VERSION);
+    let url = state
+        .settings
+        .get(crate::xiiinrv::version::CLE_URL_VERSION)
+        .filter(|u| !u.trim().is_empty())
+        .or_else(|| Some(crate::xiiinrv::version::URL_VERSION_PAR_DEFAUT.to_string()));
     Ok(crate::xiiinrv::version::verifier(url, env!("CARGO_PKG_VERSION")).await)
 }
 
