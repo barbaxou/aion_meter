@@ -14,10 +14,11 @@ les soins, le déroulé des combats et leur historique.
 
 ## Installer le meter
 
-**Tu n'as pas besoin de ce dépôt pour utiliser le meter.** Il contient le code
-source ; le programme prêt à installer est sur le site de la guilde.
+**Tu n'as pas besoin de lire ce dépôt pour utiliser le meter.** Il contient le
+code source ; l'installateur prêt à l'emploi est dans les publications.
 
 ➜ **[Télécharger la dernière version](https://github.com/barbaxou/aion_meter/releases/latest)**
+— le fichier `XIII-NRV-Meter_<version>_x64_en-US.msi`.
 
 La notice complète est aussi lisible ici : [docs/INSTALLATION.md](docs/INSTALLATION.md).
 Elle couvre Npcap, l'avertissement Windows, le partage de fiche et le

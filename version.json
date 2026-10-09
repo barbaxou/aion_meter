@@ -2,6 +2,6 @@
   "version": "2.0.80",
   "date": "2026-10-09",
   "msi": "https://github.com/barbaxou/aion_meter/releases/download/v2.0.80/XIII-NRV-Meter_2.0.80_x64_en-US.msi",
-  "page": "https://REMPLACER-PAR-LE-SITE/meter",
+  "page": "https://github.com/barbaxou/aion_meter/releases/latest",
   "source": "https://github.com/barbaxou/aion_meter"
 }
