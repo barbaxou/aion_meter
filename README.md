@@ -8,8 +8,7 @@ les soins, le déroulé des combats et leur historique.
 > Meter](https://github.com/taengu/A2Tools-DPS-Meter), publié par **taengu**
 > sous licence GPL-3.0. Il a été modifié par la guilde XIII NRV à partir du
 > **1ᵉʳ octobre 2026**, et continue de l'être. Voir
-> [LISEZ-MOI-XIIINRV.md](LISEZ-MOI-XIIINRV.md) pour ce qui change, et
-> [docs/suivi/](docs/suivi/) pour le détail de chaque correction.
+> [LISEZ-MOI-XIIINRV.md](LISEZ-MOI-XIIINRV.md) pour ce qui change.
 
 ---
 
@@ -83,20 +82,21 @@ délibérément avec `A2_REPLAY_CAPTURE=... cargo test --test <nom> -- --ignored
 | `public/src/js/` | L'interface : overlay, fenêtre Détails, historique, réglages |
 | `src/` | Feuille de style et données du jeu (noms des monstres, compétences, traductions) |
 | `docs/INSTALLATION.md` | La notice destinée aux membres |
-| `docs/site/` | La page « Meter » du site de la guilde et ses consignes de déploiement |
-| `docs/suivi/` | **Le journal de bord** : une fiche datée par étape, avec ce qui a été mesuré |
-| `outils/` | Contrôle du binaire livré (chaînes interdites, témoins attendus) |
 | `docs/amont/` | Les documents de l'application d'origine, conservés pour l'attribution |
 
 ### La méthode
 
-Trois règles, tenues depuis le début et visibles dans `docs/suivi/` :
+Trois règles, tenues depuis le début. Les commentaires du code en portent la
+trace : chaque correction dit ce qui a été mesuré, et avec quels chiffres.
 
 1. **Mesurer avant de corriger.** Une hypothèse non mesurée ne justifie aucun
    changement.
 2. **Vérifier qu'un test échoue bien sans la correction.** Sinon il ne prouve
    rien.
 3. **Garder les erreurs**, datées. Elles disent ce qui a déjà été essayé.
+
+Le journal de bord complet — une fiche par étape, avec les mesures — est tenu
+par la guilde et n'est pas publié ici.
 
 ---
 

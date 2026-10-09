@@ -68,3 +68,16 @@ settings.properties
 # grossir l'historique sans rien apporter. La licence exige le source, et c'est
 # lui qui est ici.
 /docs/site/*.msi
+
+# ─── Ce qui reste chez nous ────────────────────────────────────────────────
+# Le dépôt porte le code et ce que la licence oblige à fournir. Tout ce qui ne
+# sert qu'à la guilde reste sur nos machines : notre journal de mesures, les
+# consignes de déploiement du site, nos outils de contrôle.
+#
+# La GPL-3.0 exige le *code source*, pas notre documentation interne. Ce qui
+# doit rester public et le reste : les sources, leurs commentaires, les tests,
+# la licence, la mention de modification, et la notice destinée aux membres.
+/docs/suivi/
+/docs/site/
+/outils/
+/.vscode/
