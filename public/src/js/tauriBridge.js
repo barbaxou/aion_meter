@@ -29,7 +29,7 @@
     // fallback for the singletons; the injected value is what identifies them.
     const label = window.__TAURI__?.window?.getCurrentWindow?.()?.label;
     const candidate = injected || fromUrl || label;
-    if (candidate === "details" || candidate === "settings" || candidate === "history") {
+    if (candidate === "details" || candidate === "settings" || candidate === "history" || candidate === "carte") {
       viewMode = candidate;
     }
   } catch {}
@@ -40,6 +40,8 @@
     document.documentElement.classList.add("settingsWindow");
   } else if (viewMode === "history") {
     document.documentElement.classList.add("historyWindow");
+  } else if (viewMode === "carte") {
+    document.documentElement.classList.add("carteWindow");
   }
 
   // Tool-window bootstrap. This runs regardless of whether app startup
@@ -52,6 +54,7 @@
     const PANEL_FOR_VIEW = {
       settings: [".settingsPanel", "isOpen"],
       history: [".historyPanel", "open"],
+      carte: [".cartePanel", "open"],
       details: [".detailsPanel", "open"],
     };
     const showPanel = () => {
@@ -568,6 +571,8 @@ Ouvrir la page de telechargement ?`;
     setAutoHideMeter(enabled) {
       invoke("update_settings", { key: "dpsMeter.autoHideMeter", value: String(enabled) }).catch(() => {});
     },
+    openMapWindow() { return invoke("open_map_window"); },
+    getFondsEtat() { return invoke("fonds_etat"); },
     setSaveRawPackets(enabled) {
       invoke("set_packet_logging", { enabled: !!enabled }).catch(() => {});
     },

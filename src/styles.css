@@ -6945,3 +6945,42 @@ html.settingsWindow .meter {
   user-select: text;
   pointer-events: auto;
 }
+
+/* ============================================================
+   Fenêtre de la carte (ajout XIII NRV). Une page unique sert toutes les
+   fenêtres : ici on masque tout ce qui n'est pas le panneau de la carte.
+   ============================================================ */
+.cartePanel { display: none; }
+html.carteWindow,
+html.carteWindow body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: rgb(var(--hud-bg));
+}
+html.carteWindow body > *:not(.cartePanel):not(script) { display: none !important; }
+html.carteWindow .cartePanel {
+  display: flex;
+  flex-direction: column;
+  position: fixed;
+  inset: 0;
+  color: #dfe6ee;
+  font: 13px/1.4 "Segoe UI", sans-serif;
+}
+.carteBarre { display: flex; align-items: center; gap: 10px; padding: 6px 10px; -webkit-app-region: drag; background: rgba(255,255,255,0.04); }
+.carteBarre select, .carteBarre button { -webkit-app-region: no-drag; }
+.carteChoix { background: #16202e; color: inherit; border: 1px solid #2c3a4d; border-radius: 4px; padding: 3px 6px; }
+.carteStatut { flex: 1; opacity: 0.6; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.carteFermer { background: none; border: 0; color: inherit; font-size: 20px; cursor: pointer; line-height: 1; }
+.carteFiltres { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 6px 10px; border-bottom: 1px solid #1f2b3b; }
+.carteFiltre { cursor: pointer; user-select: none; }
+.carteFiltre.aVenir { opacity: 0.4; cursor: not-allowed; }
+.carteVue { position: relative; flex: 1; min-height: 0; overflow: hidden; cursor: grab; background: #0a0e16; }
+.carteVue:active { cursor: grabbing; }
+.carteMonde { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+.carteImage, .carteRegion { position: absolute; left: 0; top: 0; pointer-events: none; user-select: none; }
+.carteRegion { opacity: 0.35; }
+.carteCalque { position: absolute; left: 0; top: 0; width: 0; height: 0; }
+.carteLieu { position: absolute; width: 8px; height: 8px; margin: -4px 0 0 -4px; border-radius: 50%; background: #ffd24a; box-shadow: 0 0 0 1px #000; }
+.carteLieuNom { position: absolute; left: 10px; top: -6px; white-space: nowrap; font-size: 22px; color: #fff; text-shadow: 0 0 3px #000, 0 0 3px #000; pointer-events: none; }
+.carteMessage { display: none; padding: 10px 14px; background: rgba(255,200,80,0.12); border-top: 1px solid #5a4a1c; }

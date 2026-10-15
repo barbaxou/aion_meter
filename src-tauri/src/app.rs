@@ -582,6 +582,47 @@ fn nom_de_cache_sur(key: &str) -> Option<String> {
     Some(key.to_string())
 }
 
+/// État des fonds de carte pour la fenêtre de la carte : présents ou non,
+/// version, dernier bilan de la synchronisation.
+/// Fenêtre de la carte : une fenêtre outil opaque, qui lit les fonds de carte
+/// du cache. `async` : construire une fenêtre dans une commande synchrone
+/// bloque WebView2 (même piège que pour les autres fenêtres outils).
+#[tauri::command]
+async fn open_map_window(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("carte") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+        return Ok(());
+    }
+    let window = tauri::WebviewWindowBuilder::new(
+        &app,
+        "carte",
+        tauri::WebviewUrl::App("index.html".into()),
+    )
+    .initialization_script("window.__A2_VIEW__ = 'carte';")
+    .title("XIII NRV — Carte")
+    .decorations(false)
+    .transparent(false)
+    .always_on_top(true)
+    .resizable(true)
+    .skip_taskbar(false)
+    .inner_size(900.0, 700.0)
+    .min_inner_size(480.0, 360.0)
+    .background_color(tauri::window::Color(10, 14, 22, 255))
+    .build()
+    .map_err(|e| e.to_string())?;
+    if !restore_window_geometry(&app, &window, "carte") {
+        center_on_overlay_monitor(&app, &window);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn fonds_etat(state: tauri::State<'_, AppState>) -> crate::xiiinrv::fonds::EtatFonds {
+    crate::xiiinrv::fonds::etat(&state.app_data_dir.join("fonds"))
+}
+
 #[tauri::command]
 fn read_cached_icon(state: tauri::State<'_, AppState>, key: String) -> Option<String> {
     let nom = nom_de_cache_sur(&key)?;
@@ -1742,6 +1783,25 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
+        // `fonds://localhost/<chemin>` : sert le cache des fonds de carte à la
+        // fenêtre de la carte, en lecture seule et sans sortir du dossier.
+        .register_uri_scheme_protocol("fonds", |ctx, requete| {
+            let reponse = |code: u16, type_mime: &str, corps: Vec<u8>| {
+                tauri::http::Response::builder()
+                    .status(code)
+                    .header("Content-Type", type_mime)
+                    .header("Access-Control-Allow-Origin", "*")
+                    .body(corps)
+                    .unwrap()
+            };
+            let Some(etat) = ctx.app_handle().try_state::<AppState>() else {
+                return reponse(503, "text/plain", Vec::new());
+            };
+            match crate::xiiinrv::fonds::servir(&etat.app_data_dir.join("fonds"), requete.uri().path()) {
+                Some((octets, type_mime)) => reponse(200, type_mime, octets),
+                None => reponse(404, "text/plain", Vec::new()),
+            }
+        })
         .setup(|app| {
             // Resolve data directory
             let app_data_dir = app.path().app_data_dir()
@@ -2064,7 +2124,7 @@ pub fn run() {
                             // (details-*) are deliberately absent: they are
                             // opened to be read and closed, and keying geometry
                             // by fight id would grow settings without bound.
-                            for label in ["details", "settings", "history"] {
+                            for label in ["details", "settings", "history", "carte"] {
                                 // While Details is pinned to a monitor its rect
                                 // comes from the setting, not from the user.
                                 // Saving it poisons the windowed geometry: turn
@@ -2272,6 +2332,8 @@ pub fn run() {
             // Ajout XIII NRV
             xiiinrv_etat,
             xiiinrv_envoyer,
+            fonds_etat,
+            open_map_window,
             get_app_version,
             get_dps_snapshot,
             get_skill_details,

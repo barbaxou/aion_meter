@@ -41,15 +41,24 @@ const PERIODE_VERIFICATION: Duration = Duration::from_secs(10 * 60);
 /// ne touche à rien d'autre : le meter garde son cache et continue.
 pub fn demarrer(dossier: PathBuf) {
     tauri::async_runtime::spawn(async move {
+        info!("XIII NRV : boucle des fonds de carte démarrée ({})", dossier.display());
         let mut horloge = tokio::time::interval(PERIODE_VERIFICATION);
         loop {
             horloge.tick().await;
             let Some((jeton, url)) = super::envoi::reglages_actifs() else {
+                noter_erreur("partage décoché ou jeton absent");
                 continue;
             };
             match synchroniser(&jeton, &url_depuis(&url), "carte", &dossier).await {
-                Ok(_) => {}
-                Err(e) => warn!("XIII NRV : {}", e),
+                Ok(Bilan::Differe) => {
+                    // Passage normal toutes les 10 minutes : on ne remplace pas
+                    // le dernier vrai bilan par « différé ».
+                }
+                Ok(bilan) => noter_bilan(&bilan),
+                Err(e) => {
+                    warn!("XIII NRV : {}", e);
+                    noter_erreur(&e);
+                }
             }
         }
     });
@@ -119,6 +128,62 @@ pub fn chemin_sur(dossier: &Path, relatif: &str) -> Option<PathBuf> {
         return None;
     }
     Some(sortie)
+}
+
+/// Sert un fichier du cache à la fenêtre de la carte (protocole `fonds://`).
+///
+/// `chemin` est le chemin de l'adresse demandée (`/carte/fonds/World_D_A.webp`).
+/// Même garde-fou que pour l'écriture : rien ne sort de `dossier`. Seuls les
+/// types attendus sont servis, en lecture seule.
+pub fn servir(dossier: &Path, chemin: &str) -> Option<(Vec<u8>, &'static str)> {
+    let relatif = chemin.trim_start_matches('/');
+    let type_mime = match Path::new(relatif).extension()?.to_str()? {
+        "webp" => "image/webp",
+        "json" => "application/json",
+        _ => return None,
+    };
+    let fichier = chemin_sur(dossier, relatif)?;
+    if !fichier.is_file() {
+        return None;
+    }
+    Some((std::fs::read(fichier).ok()?, type_mime))
+}
+
+/// Ce que la fenêtre de la carte affiche sur les fonds : présents ou non, version,
+/// et ce que la dernière synchronisation a fait.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct EtatFonds {
+    pub cache: bool,
+    pub version: Option<String>,
+    pub dernier_appel: Option<i64>,
+    pub dernier_bilan: String,
+}
+
+static DERNIER_BILAN: parking_lot::Mutex<String> = parking_lot::const_mutex(String::new());
+
+fn noter_bilan(bilan: &Bilan) {
+    let texte = match bilan {
+        Bilan::Differe => "pas d'appel (moins de 24 h)".to_string(),
+        Bilan::DejaAJour(v) => format!("à jour ({v})"),
+        Bilan::Synchronise { version, ecrits, presents, refuses } => {
+            format!("{version} : {ecrits} écrit(s), {presents} déjà présent(s), {refuses} refusé(s)")
+        }
+    };
+    *DERNIER_BILAN.lock() = texte;
+}
+
+fn noter_erreur(e: &str) {
+    *DERNIER_BILAN.lock() = format!("erreur : {e}");
+}
+
+pub fn etat(dossier: &Path) -> EtatFonds {
+    let bilan = DERNIER_BILAN.lock().clone();
+    EtatFonds {
+        cache: dossier.join("carte").join("carte.json").is_file(),
+        version: lire_texte(&dossier.join(FICHIER_VERSION)),
+        dernier_appel: lire_nombre(&dossier.join(FICHIER_APPEL)),
+        dernier_bilan: if bilan.is_empty() { "aucun passage depuis le lancement".to_string() } else { bilan },
+    }
 }
 
 fn url_acceptable(url: &str) -> bool {
@@ -391,6 +456,38 @@ mod tests {
         let bilan = appliquer(&d, &m, |_| async { Ok(b"x".to_vec()) }).await;
         assert_eq!(bilan, Bilan::Synchronise { version: "v".into(), ecrits: 0, presents: 0, refuses: 2 });
         assert!(!d.parent().unwrap().join("evasion.txt").exists());
+    }
+
+    #[test]
+    fn servir_ne_sort_jamais_du_dossier_et_donne_le_bon_type() {
+        let d = dossier("servir");
+        std::fs::create_dir_all(d.join("carte/fonds")).unwrap();
+        std::fs::write(d.join("carte/carte.json"), b"{}").unwrap();
+        std::fs::write(d.join("carte/fonds/A.webp"), b"RIFF").unwrap();
+        std::fs::write(d.parent().unwrap().join("xiiinrv-secret.txt"), b"x").unwrap();
+
+        assert_eq!(servir(&d, "/carte/carte.json"), Some((b"{}".to_vec(), "application/json")));
+        assert_eq!(servir(&d, "carte/fonds/A.webp"), Some((b"RIFF".to_vec(), "image/webp")));
+        for mauvais in ["/../xiiinrv-secret.txt", "/carte/../../xiiinrv-secret.txt", "//C:/Windows/win.ini",
+                        "/absent.webp", "/carte", "/", "/carte/carte.json?x=1/../.."] {
+            assert_eq!(servir(&d, mauvais), None, "servi à tort : {mauvais:?}");
+        }
+        // Un type inconnu n'est pas servi.
+        std::fs::write(d.join("carte/x.exe"), b"MZ").unwrap();
+        assert_eq!(servir(&d, "/carte/x.exe"), None);
+    }
+
+    #[tokio::test]
+    async fn l_etat_dit_absent_sans_cache_puis_la_version_et_le_dernier_bilan() {
+        let d = dossier("etat");
+        assert_eq!(etat(&d).cache, false);
+        let m = Manifeste { version: "113-2026-10-01".into(), unchanged: false, files: vec![fichier("carte/carte.json", b"{}")] };
+        let bilan = appliquer(&d, &m, |_| async { Ok(b"{}".to_vec()) }).await;
+        noter_bilan(&bilan);
+        let e = etat(&d);
+        assert!(e.cache);
+        assert_eq!(e.version.as_deref(), Some("113-2026-10-01"));
+        assert!(e.dernier_bilan.contains("1 écrit"), "bilan : {}", e.dernier_bilan);
     }
 
     /// Constat réel contre le site (contrat v2 : 429 si deux appels dans l'heure,

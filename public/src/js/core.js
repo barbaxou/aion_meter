@@ -1969,6 +1969,22 @@ class DpsApp {
     // so the whole top of the window is grab-and-drag surface. Details is opened
     // from a player row, History from its own header button.
 
+    const carteBtn = document.querySelector(".carteBtn");
+    if (carteBtn) {
+      const ouvrirCarte = () => window.javaBridge?.openMapWindow?.();
+      carteBtn.addEventListener("click", () => {
+        if (this.isWindowDragging) return;
+        ouvrirCarte();
+      });
+      carteBtn.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          ouvrirCarte();
+        }
+      });
+      carteBtn.setAttribute("data-no-drag", "true");
+    }
+
     const historyBtn = document.querySelector(".historyBtn");
     if (historyBtn) {
       // History is part of the Details surface, not the overlay: opening it
