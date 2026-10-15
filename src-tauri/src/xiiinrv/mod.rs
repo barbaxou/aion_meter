@@ -28,6 +28,7 @@
 
 pub mod collecte;
 pub mod envoi;
+pub mod fonds;
 pub mod jeton;
 pub mod version;
 

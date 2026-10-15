@@ -70,6 +70,17 @@ pub fn configurer(jeton: Option<String>, url: Option<String>, actif: bool) {
     ouvrir_lecture(c.actif);
 }
 
+/// Jeton, adresse de réception et état du partage, pour les autres modules du
+/// partage (téléchargement des fonds). `None` sans jeton ou partage décoché.
+pub fn reglages_actifs() -> Option<(String, String)> {
+    let c = config().lock().clone();
+    if !c.actif {
+        return None;
+    }
+    let jeton = c.jeton?;
+    Some((jeton, c.url.unwrap_or_else(|| URL_PAR_DEFAUT.to_string())))
+}
+
 /// Ce que l'interface affiche dans l'onglet « Guilde XIII NRV ».
 #[derive(Serialize)]
 pub struct EtatPartage {

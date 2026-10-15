@@ -2224,6 +2224,8 @@ pub fn run() {
                     etat.app_data_dir.join("fiche.json"),
                 );
                 crate::xiiinrv::collecte::charger();
+                // Fonds de carte : téléchargés depuis le site, jamais embarqués.
+                crate::xiiinrv::fonds::demarrer(etat.app_data_dir.join("fonds"));
             }
 
             // Le nom détecté par A2Tools sert de filet quand la fiche de
