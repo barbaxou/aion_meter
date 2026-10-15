@@ -6986,7 +6986,7 @@ html.carteWindow .cartePanel {
 .carteFiltreExtra { border-left: 1px solid #2c3a4d; padding-left: 12px; }
 .carteObjet { position: absolute; width: 0; height: 0; transform: scale(var(--inverse, 1)); transform-origin: 0 0; }
 .carteObjetRond { position: absolute; left: -10px; top: -10px; width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 0 1px #000; }
-.carteObjetAnneau { box-shadow: 0 0 0 1px #000, 0 0 0 4px rgba(255,255,255,0.75); }
+.carteObjetActif { box-shadow: 0 0 0 1px #000, 0 0 0 4px #3ddc6b; }
 .carteObjetNom { position: absolute; left: 14px; top: -9px; white-space: nowrap; font-size: 12px; color: #fff; text-shadow: 0 0 3px #000, 0 0 3px #000; pointer-events: none; }
 .carteMonde.sansNomsObjets .carteObjetNom { display: none; }
 .carteCategories { border-bottom: 1px solid #1f2b3b; }

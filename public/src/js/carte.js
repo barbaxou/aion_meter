@@ -51,19 +51,23 @@
     };
   }
 
-  // Affiché tant qu'on n'a pas demandé à voir ce que le jeu montre déjà, ni le bruit.
-  function afficheParDefaut(c) {
-    return c.inconnu || (!c.surCarteDuJeu && !c.bruit);
+  // Un objet est « confirmé actif » quand le meter vient de le voir : un éphémère
+  // présent, ou un objet vu dans les dernières minutes. Passé ce délai on ne sait plus
+  // s'il est toujours là (le jeu n'annonce pas toutes les disparitions) : pas de cercle.
+  const CONFIRME_MS = 5 * 60 * 1000;
+  function confirme(objet, maintenant) {
+    if (objet.genre === "ephemere") return true;
+    return typeof objet.vu_a === "number" && maintenant - objet.vu_a <= CONFIRME_MS;
   }
 
   const CAMPS = { asmodien: "Asmodiens", elyos: "Élyséens", abysse: "Abysses" };
 
   if (racine && typeof module !== "undefined" && module.exports) {
-    module.exports = { projeter, CALQUES, classer, afficheParDefaut };
+    module.exports = { projeter, CALQUES, classer, confirme };
     return;
   }
   if (typeof window === "undefined" || window.A2_VIEW !== "carte") {
-    window.Carte = { projeter, CALQUES, classer, afficheParDefaut };
+    window.Carte = { projeter, CALQUES, classer, confirme };
     return;
   }
 
@@ -92,16 +96,10 @@
   let filtres = {};
   try { filtres = JSON.parse(lire(CLE_FILTRES) || "{}") || {}; } catch { filtres = {}; }
   const actif = (id) => filtres[id] !== false;
-  // Les deux cases « réafficher » sont décochées tant qu'on ne les a pas cochées.
-  const voir = (id) => filtres[id] === true;
-  const EXTRAS = [
-    { id: "jeu", libelle: "Déjà sur la carte du jeu" },
-    { id: "bruit", libelle: "Bruit (pianos, points d'arrivée)" },
-  ];
-  // Une catégorie est affichée tant qu'on ne l'a pas décochée.
-  const voirCat = (id) => filtres["cat_" + id] !== false;
+  // Une catégorie est affichée tant qu'on ne l'a pas décochée, sauf « Autres » (repères
+  // sans intérêt comme les pianos ou les points d'arrivée), cachée tant qu'on ne la coche pas.
+  const voirCat = (id) => (filtres["cat_" + id] === undefined ? id !== "autre" : filtres["cat_" + id]);
   const voirNoms = () => filtres.noms !== false;
-  const visible = (c) => c.inconnu || ((!c.surCarteDuJeu || voir("jeu")) && (!c.bruit || voir("bruit")));
 
   const etat = { donnees: null, envobjs: null, id: null, echelle: 1, dx: 0, dy: 0 };
   const el = {};
@@ -166,20 +164,6 @@
         appliquerFiltres();
       });
       label.append(case_, document.createTextNode(" " + c.libelle + (c.disponible ? "" : " (à venir)")));
-      el.filtres.append(label);
-    }
-
-    for (const x of EXTRAS) {
-      const label = creer("label", "carteFiltre carteFiltreExtra");
-      const case_ = creer("input");
-      case_.type = "checkbox";
-      case_.checked = voir(x.id);
-      case_.addEventListener("change", () => {
-        filtres[x.id] = case_.checked;
-        ecrire(CLE_FILTRES, JSON.stringify(filtres));
-        rafraichirObjets();
-      });
-      label.append(case_, document.createTextNode(" " + x.libelle));
       el.filtres.append(label);
     }
 
@@ -350,8 +334,8 @@
     // La carte a changé pendant l'appel : ces objets seront redessinés au tour suivant.
     if (idCourant !== etat.id) return;
     const signature = [
-      idCourant, voir("jeu"), voir("bruit"), CATEGORIES.map((k) => (voirCat(k.id) ? 1 : 0)).join(""),
-      !!etat.envobjs, Math.floor(Date.now() / 3600000), JSON.stringify(objets),
+      idCourant, CATEGORIES.map((k) => (voirCat(k.id) ? 1 : 0)).join(""),
+      !!etat.envobjs, Math.floor(Date.now() / 60000), JSON.stringify(objets),
     ].join(":");
     if (signature === etat.signatureObjets) return;
     etat.signatureObjets = signature;
@@ -362,29 +346,26 @@
     if (!calque) return;
     calque.textContent = "";
     const compte = {};
-    let affiches = 0, masquesJeu = 0, masquesBruit = 0;
+    let affiches = 0, actifs = 0;
+    const maintenant = Date.now();
     for (const o of objets) {
       const info = o.genre === "decor" ? classer(etat.envobjs, o.modele) : null;
-      if (info && !visible(info)) {
-        if (info.surCarteDuJeu && !voir("jeu")) masquesJeu++;
-        else masquesBruit++;
-        continue;
-      }
       const cat = categoriser(etat.envobjs, o.modele, o.genre);
       compte[cat] = (compte[cat] || 0) + 1;
       if (!voirCat(cat)) continue;
       const pos = projeter(carte, o.x / unite, o.y / unite);
       if (!pos) continue;
-      calque.append(creerPastille(o, info, cat, pos));
+      const actif = confirme(o, maintenant);
+      calque.append(creerPastille(o, info, cat, pos, actif));
       affiches++;
+      if (actif) actifs++;
     }
     for (const k of CATEGORIES) {
       el.compteurs[k.id].textContent = ` (${compte[k.id] || 0})`;
       el.etiquettesCat[k.id].classList.toggle("vide", !compte[k.id]);
     }
-    const masques = masquesJeu + masquesBruit;
     el.note.textContent = objets.length
-      ? `${affiches} objet(s) affiché(s), ${masques} masqué(s) (carte du jeu : ${masquesJeu}, bruit : ${masquesBruit})`
+      ? `${affiches} objet(s) affiché(s), dont ${actifs} confirmé(s) actif(s) (cercle vert : vu à l'instant)`
         + (etat.envobjs ? "" : " — noms indisponibles (données non téléchargées)")
         + " — carte du jeu non identifiée : affichés sur la carte choisie."
       : "";
@@ -392,7 +373,7 @@
 
   // Une pastille : disque coloré avec le pictogramme de sa catégorie, son nom à côté
   // (visible à partir d'un certain zoom) et le détail au survol.
-  function creerPastille(o, info, cat, pos) {
+  function creerPastille(o, info, cat, pos, actif) {
     const def = CAT[cat] || CAT.autre;
     const nom = info ? info.nom : (o.genre === "ephemere" ? "Âme (objet éphémère)" : "Monstre");
     const pt = creer("div", "carteObjet");
@@ -401,19 +382,22 @@
     const rond = creer("div", "carteObjetRond");
     rond.style.background = def.couleur;
     rond.append(pictogramme(def.picto));
+    // Cercle vert : le meter vient de le voir. Sans cercle : vu plus tôt, non confirmé.
+    if (actif) rond.classList.add("carteObjetActif");
     let detail = `${nom} — ${def.libelle}`;
+    if (info && info.surCarteDuJeu) detail += " · déjà sur la carte du jeu";
     if (o.genre === "decor") detail += ` · vu ${o.fois_vu} fois`;
     const quand = ilYa(o.vu_a);
     if (quand) detail += ` · ${quand}`;
+    detail += actif ? " · actif" : " · non confirmé";
     if (cat === "cube") {
       // Un cube n'est pas une zone : c'est l'endroit où il a été vu. On estompe les
-      // anciens (il a pu être pris ou disparaître) et on cerne ceux qui reviennent.
+      // anciens (il a pu être pris ou disparaître).
       const sombre = etat.envobjs?.[String(o.modele)]?.category === "HiddenCubeDark";
       if (sombre) rond.style.background = "#9b3f86";
       const jours = (Date.now() - o.vu_a) / 86400000;
       pt.style.opacity = jours <= 1 ? "1" : jours <= 7 ? "0.75" : "0.5";
-      if (o.fois_vu >= 3) rond.classList.add("carteObjetAnneau");
-      detail = `${nom} (${sombre ? "sombre" : "clair"}) · vu ici${o.fois_vu > 1 ? ` ${o.fois_vu} fois` : ""} · ${quand}`;
+      detail = `${nom} (${sombre ? "sombre" : "clair"}) · vu ici${o.fois_vu > 1 ? ` ${o.fois_vu} fois` : ""} · ${quand} · ${actif ? "actif" : "non confirmé"}`;
     }
     rond.title = detail;
     pt.append(rond, creer("span", "carteObjetNom", nom));

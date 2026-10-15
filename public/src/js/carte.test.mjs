@@ -7,7 +7,7 @@ import path from "node:path";
 // carte.js est un script de navigateur : on le charge avec un `module` factice.
 const contexte = { module: { exports: {} } };
 vm.runInNewContext(fs.readFileSync(new URL("./carte.js", import.meta.url), "utf8"), contexte);
-const { projeter, CALQUES, classer, afficheParDefaut } = contexte.module.exports;
+const { projeter, CALQUES, classer, confirme } = contexte.module.exports;
 const ctxCat = { module: { exports: {} } };
 vm.runInNewContext(fs.readFileSync(new URL("./carteCategories.js", import.meta.url), "utf8"), ctxCat);
 const { CATEGORIES, categoriser, compter } = ctxCat.module.exports;
@@ -36,6 +36,15 @@ if (fs.existsSync(reel)) {
   }
   console.log(`réel : ${c.poi.length} lieux d'Altgard dans l'image`);
 } else console.log("cache réel absent : contrôle sur données réelles ignoré");
+
+// Cercle vert : « confirmé actif » seulement si le meter vient de voir l'objet.
+{
+  const t = 1_700_000_000_000;
+  assert.equal(confirme({ genre: "ephemere", vu_a: 0 }, t), true, "un éphémère présent est actif");
+  assert.equal(confirme({ genre: "decor", vu_a: t - 60_000 }, t), true, "vu il y a 1 min");
+  assert.equal(confirme({ genre: "decor", vu_a: t - 3_600_000 }, t), false, "vu il y a 1 h : non confirmé");
+  assert.equal(confirme({ genre: "decor" }, t), false, "sans date : non confirmé");
+}
 
 // Catégories sans référentiel : toujours contrôlées, même sans les données du site.
 assert.equal(categoriser(null, 1300908), "autre", "sans référentiel");
@@ -67,25 +76,22 @@ if (fs.existsSync(site)) {
   const porte = classer(envobjs, 1300908); // « Abandoned Campsite Door », sur la carte du jeu
   assert.equal(porte.nom, "Abandoned Campsite Door");
   assert.equal(porte.surCarteDuJeu, true);
-  assert.equal(afficheParDefaut(porte), false, "ce que la carte du jeu affiche déjà est masqué");
   const piano = classer(envobjs, 1100356); // piano, LandingSensor
   assert.equal(piano.bruit, true);
-  assert.equal(afficheParDefaut(piano), false, "le bruit est masqué");
   const arrivee = classer(envobjs, 1100001); // « Arrival Point », TriggerActor
   assert.equal(arrivee.bruit, true);
   // Un nœud de récolte absent de la carte du jeu reste visible.
   const horsCarte = Object.entries(envobjs).find(([, v]) => v.usage === "GatherSource" && !v.onWorldMap && !v.onMiniMap);
   assert.ok(horsCarte, "il existe des GatherSource hors carte");
-  assert.equal(afficheParDefaut(classer(envobjs, Number(horsCarte[0]))), true);
+  assert.equal(classer(envobjs, Number(horsCarte[0])).surCarteDuJeu, false);
   // Un modèle inconnu est affiché : il peut valoir le coup.
   const inconnu = classer(envobjs, 9999999);
   assert.equal(inconnu.inconnu, true);
-  assert.equal(afficheParDefaut(inconnu), true);
   // `name` vaut parfois null : pas de plantage, un nom de repli.
   const sansNom = Object.entries(envobjs).find(([, v]) => v.name == null);
   if (sansNom) assert.match(classer(envobjs, Number(sansNom[0])).nom, /\S/);
   // Sans données du tout : tout est affiché, rien n'est nommé.
-  assert.equal(afficheParDefaut(classer(null, 1300908)), true);
+  assert.equal(classer(null, 1300908).inconnu, true);
   console.log("noms et filtre : ok");
 
   // Catégories : d'après le nom interne et l'usage de `envobjs.json`.
