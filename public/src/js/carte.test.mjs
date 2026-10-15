@@ -17,8 +17,9 @@ assert.deepEqual(plat(projeter(carte, 4080, 4080)), { x: 4096, y: 4096 });
 assert.deepEqual(plat(projeter(carte, 0, 0)), { x: 2048, y: 2048 });
 // Sans bornes (Abyss_Reshanta_B) : pas de position.
 assert.equal(projeter({ pixelSize: 2048 }, 1, 1), null);
-// Les catégories à venir sont grisées.
-assert.deepEqual(plat(CALQUES.filter((c) => !c.disponible).map((c) => c.id)), ["boss", "failles", "ressources", "cubes"]);
+// Les objets vus ont leurs calques ; les positions du jeu sont en centimètres.
+assert.deepEqual(plat(CALQUES.filter((c) => c.id === "decor" || c.id === "ephemeres").map((c) => c.disponible)), [true, true]);
+assert.deepEqual(plat(projeter(carte, 110192 / 100, 76199 / 100)), { x: 2048 + 110192 / 408000 * 2048, y: 2048 + 76199 / 408000 * 2048 });
 
 // Sur le cache réel, s'il est là : tous les lieux d'Altgard tombent dans l'image.
 const reel = path.join(os.tmpdir(), "xiiinrv-fonds-reel", "carte", "carte.json");

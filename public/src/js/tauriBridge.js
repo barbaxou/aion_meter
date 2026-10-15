@@ -573,6 +573,7 @@ Ouvrir la page de telechargement ?`;
     },
     openMapWindow() { return invoke("open_map_window"); },
     getFondsEtat() { return invoke("fonds_etat"); },
+    getObjetsVus() { return invoke("objets_vus"); },
     setSaveRawPackets(enabled) {
       invoke("set_packet_logging", { enabled: !!enabled }).catch(() => {});
     },

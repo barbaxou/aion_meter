@@ -32,6 +32,12 @@ pub fn set_override(ms: Option<i64>) {
     OVERRIDE_MS.with(|c| c.set(ms));
 }
 
+/// Ajout XIII NRV : vrai quand ce thread rejoue une capture (horloge figée sur
+/// l'horodatage du paquet) plutôt que de lire le trafic en direct.
+pub fn en_rejeu() -> bool {
+    OVERRIDE_MS.with(|c| c.get().is_some())
+}
+
 /// Milliseconds since the Unix epoch — the capture timestamp while replaying,
 /// otherwise the wall clock.
 pub fn now_ms() -> i64 {

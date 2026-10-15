@@ -6978,9 +6978,16 @@ html.carteWindow .cartePanel {
 .carteVue { position: relative; flex: 1; min-height: 0; overflow: hidden; cursor: grab; background: #0a0e16; }
 .carteVue:active { cursor: grabbing; }
 .carteMonde { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
-.carteImage, .carteRegion { position: absolute; left: 0; top: 0; pointer-events: none; user-select: none; }
-.carteRegion { opacity: 0.35; }
+.carteImage { position: absolute; left: 0; top: 0; pointer-events: none; user-select: none; }
 .carteCalque { position: absolute; left: 0; top: 0; width: 0; height: 0; }
-.carteLieu { position: absolute; width: 8px; height: 8px; margin: -4px 0 0 -4px; border-radius: 50%; background: #ffd24a; box-shadow: 0 0 0 1px #000; }
-.carteLieuNom { position: absolute; left: 10px; top: -6px; white-space: nowrap; font-size: 22px; color: #fff; text-shadow: 0 0 3px #000, 0 0 3px #000; pointer-events: none; }
+.carteLieu { position: absolute; width: 0; height: 0; transform: scale(var(--inverse, 1)); transform-origin: 0 0; }
+.carteLieu::before { content: ""; position: absolute; left: -4px; top: -4px; width: 8px; height: 8px; border-radius: 50%; background: #ffd24a; box-shadow: 0 0 0 1px #000; }
+.carteLieuNom { position: absolute; left: 8px; top: -8px; white-space: nowrap; font-size: 13px; color: #fff; text-shadow: 0 0 3px #000, 0 0 3px #000; pointer-events: none; }
+.carteObjet { position: absolute; width: 0; height: 0; transform: scale(var(--inverse, 1)); transform-origin: 0 0; }
+.carteObjet::before { content: ""; position: absolute; left: -5px; top: -5px; width: 10px; height: 10px; box-sizing: border-box; border-radius: 50%; box-shadow: 0 0 0 1px #000; pointer-events: auto; }
+.carteObjetDecor::before { background: #5ad1ff; }
+.carteObjetEphemere::before { background: #c07dff; }
+.carteNote { padding: 4px 10px; font-size: 11px; opacity: 0.65; }
+.carteNote:empty { display: none; }
+.carteMonde.sansNoms .carteLieuNom { display: none; }
 .carteMessage { display: none; padding: 10px 14px; background: rgba(255,200,80,0.12); border-top: 1px solid #5a4a1c; }

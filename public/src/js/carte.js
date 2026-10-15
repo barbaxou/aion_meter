@@ -8,6 +8,9 @@
 (function (racine) {
   "use strict";
 
+  // Les positions du jeu sont en centimètres, les lieux de la carte en mètres.
+  const CM_PAR_M = 100;
+
   // Projection du contrat : les lieux sont en mètres, les bornes de monde en
   // centimètres (`unitFactor`). La colonne est X, la ligne est Y (vers le bas).
   function projeter(carte, x, y) {
@@ -22,13 +25,14 @@
   const CALQUES = [
     { id: "fond", libelle: "Fond", disponible: true },
     { id: "chemins", libelle: "Chemins", disponible: true },
-    { id: "regions", libelle: "Régions", disponible: true },
     { id: "lieux", libelle: "Lieux nommés", disponible: true },
-    { id: "boss", libelle: "Boss", disponible: false },
-    { id: "failles", libelle: "Failles", disponible: false },
-    { id: "ressources", libelle: "Ressources", disponible: false },
-    { id: "cubes", libelle: "Cubes", disponible: false },
+    // Objets vus passer dans le trafic du jeu (décodés par le meter, gardés en local).
+    { id: "decor", libelle: "Objets du décor", disponible: true },
+    { id: "ephemeres", libelle: "Objets éphémères", disponible: true },
   ];
+
+  // Échelle (écran / pixels de la carte) sous laquelle les noms sont masqués.
+  const SEUIL_NOMS = 0.3;
 
   const CAMPS = { asmodien: "Asmodiens", elyos: "Élyséens", abysse: "Abysses" };
 
@@ -97,7 +101,8 @@
     el.monde = creer("div", "carteMonde");
     el.vue.append(el.monde);
     el.message = creer("div", "carteMessage");
-    panneau.append(el.barre, el.filtres, el.vue, el.message);
+    el.note = creer("div", "carteNote");
+    panneau.append(el.barre, el.filtres, el.vue, el.note, el.message);
 
     el.choix.addEventListener("change", () => afficher(el.choix.value));
     brancherSouris();
@@ -113,6 +118,10 @@
 
   function appliquerTransform() {
     el.monde.style.transform = `translate(${etat.dx}px, ${etat.dy}px) scale(${etat.echelle})`;
+    // Les lieux gardent la même taille à l'écran quel que soit le zoom.
+    el.monde.style.setProperty("--inverse", String(1 / etat.echelle));
+    // Trop dézoomé, les noms se chevauchent : on garde les points seuls.
+    el.monde.classList.toggle("sansNoms", etat.echelle < SEUIL_NOMS);
   }
 
   function reinitialiserVue() {
@@ -171,22 +180,13 @@
     const c = etat.donnees.maps[id];
     if (!c) return;
     etat.id = id;
+    etat.signatureObjets = null;
     ecrire(CLE_CARTE, id);
     el.monde.textContent = "";
     el.monde.style.width = el.monde.style.height = c.pixelSize + "px";
 
     el.monde.append(image("fond", c.background, c.pixelSize));
     if (c.paths) el.monde.append(image("chemins", c.paths, c.pixelSize));
-
-    const regions = creer("div", "carteCalque");
-    regions.dataset.calque = "regions";
-    for (const r of c.regions || []) {
-      const img = image("", `regions/${id}/${r}.webp`, c.pixelSize);
-      img.removeAttribute("data-calque");
-      img.classList.add("carteRegion");
-      regions.append(img);
-    }
-    el.monde.append(regions);
 
     const lieux = creer("div", "carteCalque");
     lieux.dataset.calque = "lieux";
@@ -202,10 +202,56 @@
       places++;
     }
     el.monde.append(lieux);
+    for (const [id, classe] of [["decor", "carteObjetDecor"], ["ephemeres", "carteObjetEphemere"]]) {
+      const calque = creer("div", "carteCalque");
+      calque.dataset.calque = id;
+      calque.dataset.classe = classe;
+      el.monde.append(calque);
+    }
+    rafraichirObjets();
     appliquerFiltres();
     message(c.world ? "" : "Cette carte n'a pas de repère de position : le fond seul est affiché.");
     reinitialiserVue();
     void places;
+  }
+
+  // Redessine les objets vus. Ils sont rangés « carte non identifiée » : le meter
+  // ne sait pas encore sur quelle carte on se trouve, ils s'affichent donc sur la
+  // carte choisie.
+  async function rafraichirObjets() {
+    // Fenêtre cachée ou carte absente : rien à redessiner.
+    if (document.hidden) return;
+    const idCourant = etat.id;
+    const c = etat.donnees?.maps?.[idCourant];
+    if (!c || !c.world) { el.note.textContent = ""; return; }
+    let objets = [];
+    try { objets = (await window.javaBridge.getObjetsVus()) || []; } catch {}
+    // La carte a changé pendant l'appel : ces objets seront redessinés au tour suivant.
+    if (idCourant !== etat.id) return;
+    const signature = idCourant + ":" + JSON.stringify(objets);
+    if (signature === etat.signatureObjets) return;
+    etat.signatureObjets = signature;
+    // Les positions du jeu sont en centimètres ; `projeter` attend des mètres.
+    const unite = etat.donnees.unitFactor || CM_PAR_M;
+    const carte = { ...c, unitFactor: unite };
+    for (const id of ["decor", "ephemeres"]) {
+      const calque = el.monde.querySelector(`[data-calque="${id}"]`);
+      if (!calque) continue;
+      calque.textContent = "";
+      const genre = id === "decor" ? "decor" : "ephemere";
+      for (const o of objets.filter((o) => o.genre === genre)) {
+        const pos = projeter(carte, o.x / unite, o.y / unite);
+        if (!pos) continue;
+        const pt = creer("div", "carteObjet " + calque.dataset.classe);
+        pt.style.left = pos.x + "px";
+        pt.style.top = pos.y + "px";
+        pt.title = genre === "decor" ? `Modèle ${o.modele} · vu ${o.fois_vu} fois` : "Objet éphémère";
+        calque.append(pt);
+      }
+    }
+    el.note.textContent = objets.length
+      ? `${objets.length} objet(s) vu(s) en jouant — carte du jeu non identifiée : affichés sur la carte choisie.`
+      : "";
   }
 
   async function demarrer() {
@@ -244,6 +290,7 @@
     const depart = derniere && etat.donnees.maps[derniere] ? derniere : (etat.donnees.maps.World_D_A ? "World_D_A" : cartes[0][0]);
     el.choix.value = depart;
     afficher(depart);
+    setInterval(rafraichirObjets, 5000);
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", demarrer, { once: true });

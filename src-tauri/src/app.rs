@@ -618,6 +618,12 @@ async fn open_map_window(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// Objets vus en jouant (décor, éphémères), pour le calque de la carte.
+#[tauri::command]
+fn objets_vus() -> Vec<crate::capture::objets_vus::ObjetVu> {
+    crate::capture::objets_vus::instantane()
+}
+
 #[tauri::command]
 fn fonds_etat(state: tauri::State<'_, AppState>) -> crate::xiiinrv::fonds::EtatFonds {
     crate::xiiinrv::fonds::etat(&state.app_data_dir.join("fonds"))
@@ -2286,6 +2292,8 @@ pub fn run() {
                 crate::xiiinrv::collecte::charger();
                 // Fonds de carte : téléchargés depuis le site, jamais embarqués.
                 crate::xiiinrv::fonds::demarrer(etat.app_data_dir.join("fonds"));
+                // Objets vus en jouant (positions) : fichier local, jamais envoyé.
+                crate::xiiinrv::objets_disque::demarrer(etat.app_data_dir.join("objets_vus.json"));
             }
 
             // Le nom détecté par A2Tools sert de filet quand la fiche de
@@ -2333,6 +2341,7 @@ pub fn run() {
             xiiinrv_etat,
             xiiinrv_envoyer,
             fonds_etat,
+            objets_vus,
             open_map_window,
             get_app_version,
             get_dps_snapshot,

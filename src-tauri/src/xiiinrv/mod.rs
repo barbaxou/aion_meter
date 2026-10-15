@@ -17,6 +17,9 @@
 //!
 //!   Tout le reste est ignoré. Aucun message de discussion, aucune position,
 //!   aucun autre joueur : uniquement la fiche de son propre personnage.
+//!   (Les objets vus en jouant, avec leur position, sont gardés dans un fichier
+//!   local par `objets_disque` et `capture::objets_vus` : ils ne passent jamais
+//!   par ce module d'envoi.)
 //!
 //! CE QU'ON N'ENVOIE PAS
 //!   Aucun nom d'objet : le jeu ne les fait pas circuler, et le site n'en veut
@@ -30,6 +33,7 @@ pub mod collecte;
 pub mod envoi;
 pub mod fonds;
 pub mod jeton;
+pub mod objets_disque;
 pub mod version;
 
 pub use collecte::observer;

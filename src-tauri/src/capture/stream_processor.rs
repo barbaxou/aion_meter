@@ -355,6 +355,8 @@ impl StreamProcessor {
         // direct (2 h 15 d'enregistrement, zéro sur quatre) et nous y revenons.
         // Voir `docs/DECISION-REPARTIR-DE-A2TOOLS.md` du dépôt du site.
         crate::xiiinrv::observer(packet);
+        // Ajout XIII NRV : objets vus (décor, éphémères), gardés en local.
+        super::objets_vus::observer(packet);
 
         let parsed_damage = self.parsing_damage(packet, true, false);
         let parsed_ownership = self.parse_summon_ownership_packet(packet);
