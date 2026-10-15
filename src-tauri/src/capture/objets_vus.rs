@@ -10,6 +10,10 @@
 //!     modèle se traduit par `envobjs.json` du site.
 //!   - `1e 56` : objet éphémère créé (id u16 aux octets 3-4, position à l'octet 7).
 //!   - `1f 56` : le même objet retiré. Les ids sont propres à une zone.
+//!   - `41 36` : apparition d'un PNJ. Après l'identifiant d'entité (varint, `e` = son
+//!     octet suivant) : catégorie à `e` (4, 5 et 12 pour un monstre ; 31 est un esprit
+//!     allié, 133 une autre disposition : ignorés), type de PNJ (u32) à `e+3`, position
+//!     x, y, z (f32) à `e+9`. C'est le point où le monstre a été vu apparaître, pas un suivi.
 //!
 //! Les positions restent **locales** : rien ici n'est envoyé au site et rien
 //! n'entre dans l'Evidence Slice. Le module est dans `capture`, donc sans Tauri
@@ -23,6 +27,11 @@ use std::sync::OnceLock;
 
 /// Plafond d'objets gardés : au-delà, les moins récemment vus sont écartés.
 pub const MAX_OBJETS: usize = 20_000;
+/// Plafond propre aux monstres : ils réapparaissent sans cesse et ne doivent pas
+/// chasser le décor durable (cubes, minerais) vu une seule fois.
+pub const MAX_MONSTRES: usize = 5_000;
+/// Délai avant de réécrire un objet déjà connu, revu entre-temps.
+const REECRITURE_MS: i64 = 60_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -31,6 +40,8 @@ pub enum Genre {
     Decor,
     /// Objet éphémère (`1e 56`), présent tant que le jeu ne l'a pas retiré.
     Ephemere,
+    /// Monstre vu apparaître (`41 36`), conservé : `modele` est son type de PNJ.
+    Mob,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -53,6 +64,8 @@ pub enum Evenement {
     Decor { modele: u32, x: f32, y: f32, z: f32 },
     EphemereApparait { id: u16, x: f32, y: f32, z: f32 },
     EphemereDisparait { id: u16 },
+    /// Un monstre est apparu : type de PNJ et position.
+    Monstre { type_pnj: u32, x: f32, y: f32, z: f32 },
     /// `23 36` : le joueur est téléporté, les ids de la zone ne valent plus rien.
     ChangementDeZone,
 }
@@ -93,6 +106,25 @@ pub fn decoder(charge: &[u8]) -> Option<Evenement> {
             let id = u16::from_le_bytes(charge.get(3..5)?.try_into().ok()?);
             Some(Evenement::EphemereDisparait { id })
         }
+        // Apparition d'un PNJ : on ne garde que les monstres (catégories 4, 5 et 12).
+        (0x41, 0x36) => {
+            let id = super::stream_processor::read_varint(charge, 2);
+            if id.length <= 0 {
+                return None;
+            }
+            let e = 2 + id.length as usize;
+            if !matches!(*charge.get(e)?, 4 | 5 | 12) {
+                return None;
+            }
+            // Le bit 0 de l'octet e+2 annonce un nom en ligne avant le type : la disposition
+            // change et les offsets ci-dessous ne valent plus (jamais vu dans nos mesures).
+            if charge.get(e + 2)? & 1 != 0 {
+                return None;
+            }
+            let type_pnj = u32::from_le_bytes(charge.get(e + 3..e + 7)?.try_into().ok()?);
+            let (x, y, z) = (lire_f32(charge, e + 9)?, lire_f32(charge, e + 13)?, lire_f32(charge, e + 17)?);
+            (type_pnj != 0 && position_valide(x, y, z)).then_some(Evenement::Monstre { type_pnj, x, y, z })
+        }
         // Le joueur lui-même est téléporté (entité 0).
         (0x23, 0x36) => (*charge.get(2)? == 0x00).then_some(Evenement::ChangementDeZone),
         _ => None,
@@ -113,20 +145,31 @@ fn etat() -> &'static Mutex<Etat> {
     E.get_or_init(|| Mutex::new(Etat::default()))
 }
 
+/// Clé de dédoublonnage : au mètre pour un objet du décor, à 10 m pour un monstre
+/// (qui n'apparaît jamais deux fois exactement au même endroit).
 fn cle(o: &ObjetVu) -> (Genre, u32, i32, i32) {
-    (o.genre, o.modele, (o.x / 100.0).round() as i32, (o.y / 100.0).round() as i32)
+    let pas = if o.genre == Genre::Mob { 1000.0 } else { 100.0 };
+    (o.genre, o.modele, (o.x / pas).round() as i32, (o.y / pas).round() as i32)
 }
 
-/// Ecarte les moins récemment vus au-delà du plafond.
+/// Ecarte les moins récemment vus au-delà du plafond, séparément pour le décor et
+/// pour les monstres.
 fn limiter(e: &mut Etat) {
-    if e.conserves.len() <= MAX_OBJETS {
-        return;
-    }
-    let mut par_date: Vec<(i64, (Genre, u32, i32, i32))> = e.conserves.iter().map(|(k, o)| (o.vu_a, *k)).collect();
-    par_date.sort_unstable_by_key(|(date, _)| *date);
-    let en_trop = e.conserves.len() - MAX_OBJETS;
-    for (_, k) in par_date.into_iter().take(en_trop) {
-        e.conserves.remove(&k);
+    for (monstres, plafond) in [(false, MAX_OBJETS), (true, MAX_MONSTRES)] {
+        let mut par_date: Vec<(i64, (Genre, u32, i32, i32))> = e
+            .conserves
+            .iter()
+            .filter(|(k, _)| (k.0 == Genre::Mob) == monstres)
+            .map(|(k, o)| (o.vu_a, *k))
+            .collect();
+        if par_date.len() <= plafond {
+            continue;
+        }
+        par_date.sort_unstable_by_key(|(date, _)| *date);
+        let en_trop = par_date.len() - plafond;
+        for (_, k) in par_date.into_iter().take(en_trop) {
+            e.conserves.remove(&k);
+        }
     }
 }
 
@@ -136,8 +179,11 @@ fn appliquer(ev: Evenement, maintenant: i64) {
         Evenement::Decor { modele, x, y, z } => {
             let o = ObjetVu { genre: Genre::Decor, modele, x, y, z, vu_a: maintenant, fois_vu: 1 };
             let k = cle(&o);
+            let mut change = true;
             match e.conserves.get_mut(&k) {
                 Some(deja) => {
+                    // Un objet revu à l'instant ne justifie pas une nouvelle écriture.
+                    change = maintenant - deja.vu_a >= REECRITURE_MS || maintenant < deja.vu_a;
                     deja.vu_a = maintenant;
                     deja.fois_vu = deja.fois_vu.saturating_add(1);
                 }
@@ -146,7 +192,29 @@ fn appliquer(ev: Evenement, maintenant: i64) {
                     limiter(&mut e);
                 }
             }
-            e.modifie = true;
+            if change {
+                e.modifie = true;
+            }
+        }
+        Evenement::Monstre { type_pnj, x, y, z } => {
+            let o = ObjetVu { genre: Genre::Mob, modele: type_pnj, x, y, z, vu_a: maintenant, fois_vu: 1 };
+            let k = cle(&o);
+            let mut change = true;
+            match e.conserves.get_mut(&k) {
+                Some(deja) => {
+                    // Un objet revu à l'instant ne justifie pas une nouvelle écriture.
+                    change = maintenant - deja.vu_a >= REECRITURE_MS || maintenant < deja.vu_a;
+                    deja.vu_a = maintenant;
+                    deja.fois_vu = deja.fois_vu.saturating_add(1);
+                }
+                None => {
+                    e.conserves.insert(k, o);
+                    limiter(&mut e);
+                }
+            }
+            if change {
+                e.modifie = true;
+            }
         }
         Evenement::EphemereApparait { id, x, y, z } => {
             let o = ObjetVu { genre: Genre::Ephemere, modele: 0, x, y, z, vu_a: maintenant, fois_vu: 1 };
@@ -187,7 +255,7 @@ pub fn instantane() -> Vec<ObjetVu> {
 /// Recharge ce qui avait été sauvegardé (au démarrage).
 pub fn charger(objets: Vec<ObjetVu>) {
     let mut e = etat().lock();
-    for o in objets.into_iter().filter(|o| o.genre == Genre::Decor && position_valide(o.x, o.y, o.z)) {
+    for o in objets.into_iter().filter(|o| o.genre != Genre::Ephemere && position_valide(o.x, o.y, o.z)) {
         e.conserves.insert(cle(&o), o);
     }
     limiter(&mut e);
@@ -220,6 +288,12 @@ mod tests {
     // Octets réels de la capture du 15/10/2026 (flux de jeu), à partir de l'opcode.
     const DECOR: &str = "3436cda2020400acd91300f937d74778d3944700c0a044000000000080ca41010101cd235f39a10100000000000000000000eccc9660070000";
     const EPHEMERE_3FA4: &str = "1e56013fa40000763dbe472897af47000090426482be47298eaf4700009842e2960000d32b3a00dd43de1f01000000022e0004000000ff089e231c3f";
+    // Apparitions de PNJ (`41 36`) de la même capture : catégories 4, 12, 31 (esprit allié) et 133.
+    const MOB_4: &str = "41368e930104200077032d000002b1f45b471bf317470012b34700b01a43";
+    const MOB_4_BIS: &str = "4136d0b6020420007b032d00000299275d4714441b470012b34700d03643";
+    const MOB_12: &str = "4136d584010c2000fb032d0000025430d047a8a996470080784400985f43";
+    const ESPRIT_31: &str = "4136b9b8021f1000c58e2c000002331ed1476476944710687444941f9543";
+    const AUTRE_133: &str = "4136a4910185210031672c000802699733c8ce291046254daa4784317b43";
     const RETRAIT_04CE: &str = "1f560104ce0000e0960000502d3a007ab103000000ff0800";
 
     fn octets(h: &str) -> Vec<u8> {
@@ -269,6 +343,134 @@ mod tests {
             })
         );
         assert_eq!(decoder(&octets(RETRAIT_04CE)), Some(Evenement::EphemereDisparait { id: 0xce04 }));
+    }
+
+    #[test]
+    fn un_41_36_de_pnj_donne_le_type_et_la_position() {
+        assert_eq!(
+            decoder(&octets(MOB_4)),
+            Some(Evenement::Monstre {
+                type_pnj: 2_950_007,
+                x: f([0xb1, 0xf4, 0x5b, 0x47]),
+                y: f([0x1b, 0xf3, 0x17, 0x47]),
+                z: f([0x00, 0x12, 0xb3, 0x47]),
+            })
+        );
+        match decoder(&octets(MOB_4_BIS)) {
+            Some(Evenement::Monstre { type_pnj, .. }) => assert_eq!(type_pnj, 2_950_011),
+            autre => panic!("monstre attendu, obtenu {autre:?}"),
+        }
+        match decoder(&octets(MOB_12)) {
+            Some(Evenement::Monstre { type_pnj, x, y, z }) => {
+                assert_eq!(type_pnj, 2_950_139);
+                // Valeurs relevées à la main sur la capture : (106 593 ; 77 139 ; 994).
+                assert!((x - 106_592.66).abs() < 0.1 && (y - 77_139.31).abs() < 0.1 && (z - 994.0).abs() < 0.1, "({x}, {y}, {z})");
+            }
+            autre => panic!("monstre attendu, obtenu {autre:?}"),
+        }
+    }
+
+    #[test]
+    fn un_esprit_allie_ou_un_format_inconnu_n_est_pas_un_monstre() {
+        assert_eq!(decoder(&octets(ESPRIT_31)), None, "catégorie 31 : esprit allié");
+        assert_eq!(decoder(&octets(AUTRE_133)), None, "catégorie 133 : autre disposition");
+        let mut court = octets(MOB_4);
+        court.truncate(20);
+        assert_eq!(decoder(&court), None);
+        let mut sans_type = octets(MOB_4);
+        sans_type[8..12].copy_from_slice(&[0, 0, 0, 0]);
+        assert_eq!(decoder(&sans_type), None, "type de PNJ nul");
+        let mut fou = octets(MOB_4);
+        fou[14..18].copy_from_slice(&f32::INFINITY.to_le_bytes());
+        assert_eq!(decoder(&fou), None);
+    }
+
+    #[test]
+    fn un_41_36_a_nom_en_ligne_ou_mal_forme_est_ignore() {
+        // Bit 0 de l'octet e+2 levé : un nom précède le type, les offsets ne valent plus.
+        let mut nomme = octets(MOB_4);
+        nomme[7] = 0x01;
+        assert_eq!(decoder(&nomme), None);
+        // Opcode seul, varint d'identifiant illisible, coordonnée NaN, hors du monde.
+        assert_eq!(decoder(&[0x41, 0x36]), None);
+        assert_eq!(decoder(&[0x41, 0x36, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x04, 0x20, 0x00]), None);
+        let mut nan = octets(MOB_4);
+        nan[14..18].copy_from_slice(&f32::NAN.to_le_bytes());
+        assert_eq!(decoder(&nan), None);
+        let mut loin = octets(MOB_4);
+        loin[18..22].copy_from_slice(&9.0e9f32.to_le_bytes());
+        assert_eq!(decoder(&loin), None);
+    }
+
+    #[test]
+    fn les_monstres_ont_leur_plafond_et_ne_chassent_pas_le_decor() {
+        let _g = VERROU.lock();
+        remettre_a_zero();
+        let mut base = Vec::new();
+        for i in 0..100i64 {
+            base.push(ObjetVu { genre: Genre::Decor, modele: 1, x: (i * 200) as f32, y: 0.0, z: 0.0, vu_a: 1, fois_vu: 1 });
+        }
+        for i in 0..(MAX_MONSTRES as i64 + 50) {
+            base.push(ObjetVu {
+                genre: Genre::Mob, modele: 7, x: ((i % 400) * 1000) as f32, y: ((i / 400) * 1000) as f32, z: 0.0,
+                vu_a: 1000 + i, fois_vu: 1,
+            });
+        }
+        charger(base);
+        let gardes = a_conserver();
+        assert_eq!(gardes.iter().filter(|o| o.genre == Genre::Mob).count(), MAX_MONSTRES);
+        assert_eq!(gardes.iter().filter(|o| o.genre == Genre::Decor).count(), 100, "le décor ancien reste");
+    }
+
+    #[test]
+    fn un_objet_revu_a_l_instant_ne_redemande_pas_d_ecriture() {
+        let _g = VERROU.lock();
+        remettre_a_zero();
+        let p = avec_longueur(&octets(DECOR));
+        observer(&p);
+        assert!(a_sauvegarder());
+        observer(&p);
+        assert!(!a_sauvegarder(), "revu dans la minute : rien à réécrire");
+    }
+
+    #[test]
+    fn un_monstre_vu_se_conserve_une_fois_et_survit_au_changement_de_zone() {
+        let _g = VERROU.lock();
+        remettre_a_zero();
+        let p = avec_longueur(&octets(MOB_4));
+        observer(&p);
+        observer(&p);
+        let gardes = a_conserver();
+        assert_eq!(gardes.len(), 1);
+        assert_eq!(gardes[0].genre, Genre::Mob);
+        assert_eq!(gardes[0].modele, 2_950_007);
+        assert_eq!(gardes[0].fois_vu, 2);
+        assert!(a_sauvegarder());
+        // Un autre monstre du même type, à moins de 10 m, est le même point.
+        let mut proche = octets(MOB_4);
+        proche[14..18].copy_from_slice(&(f([0xb1, 0xf4, 0x5b, 0x47]) + 100.0).to_le_bytes());
+        observer(&avec_longueur(&proche));
+        assert_eq!(a_conserver().len(), 1, "à 1 m : même point");
+        // Mais plus loin, c'est un autre point.
+        let mut loin = octets(MOB_4);
+        loin[14..18].copy_from_slice(&(f([0xb1, 0xf4, 0x5b, 0x47]) + 5000.0).to_le_bytes());
+        observer(&avec_longueur(&loin));
+        assert_eq!(a_conserver().len(), 2);
+        observer(&avec_longueur(&[0x23, 0x36, 0x00, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]));
+        assert_eq!(a_conserver().len(), 2, "le changement de zone ne vide pas les monstres conservés");
+    }
+
+    #[test]
+    fn la_sauvegarde_recharge_les_monstres_comme_le_decor() {
+        let _g = VERROU.lock();
+        remettre_a_zero();
+        charger(vec![
+            ObjetVu { genre: Genre::Mob, modele: 2_950_007, x: 56_309.0, y: 38_899.0, z: 0.0, vu_a: 5, fois_vu: 4 },
+            ObjetVu { genre: Genre::Ephemere, modele: 0, x: 1.0, y: 1.0, z: 0.0, vu_a: 5, fois_vu: 1 },
+        ]);
+        let gardes = a_conserver();
+        assert_eq!(gardes.len(), 1, "le monstre est rechargé, pas l'éphémère");
+        assert_eq!(gardes[0].genre, Genre::Mob);
     }
 
     #[test]

@@ -51,6 +51,9 @@ assert.equal(categoriser(null, 1300908), "autre", "sans référentiel");
 assert.equal(categoriser({}, 9999999), "autre", "modèle inconnu");
 assert.equal(categoriser({}, 0, "ephemere"), "ame");
 assert.equal(categoriser({}, 0, "mob"), "monstre");
+assert.equal(categoriser({}, 2950007, "mob", { name: "x", isBoss: false }), "monstre");
+assert.equal(categoriser({}, 2950007, "mob", { name: "x", isBoss: true }), "boss");
+assert.equal(categoriser({}, 2400032, "mob", { name: "mannequin", isBoss: true, isDummy: true }), "monstre", "un mannequin n'est pas un boss");
 const faux = {
   1: { name: "Faux cube", internal: "E_Test", usage: "Normal", category: "HiddenCubeDark" },
   2: { name: "Faux minerai", internal: "Gather_Source_Ore_L_lv1", usage: "GatherSource", category: "None" },

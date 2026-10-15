@@ -188,6 +188,12 @@ const createI18n = ({
     return fallback;
   };
 
+  // Ajout XIII NRV : la fiche d'un PNJ (nom, isBoss, isDummy), pour la carte.
+  const getNpcInfo = (id) => {
+    const value = npcStrings?.[String(id)];
+    return value && typeof value === "object" ? value : null;
+  };
+
   const applyTranslations = () => {
     document.querySelectorAll("[data-i18n]").forEach((el) => {
       const key = el.dataset.i18n;
@@ -266,6 +272,7 @@ const createI18n = ({
     format,
     getSkillName,
     getNpcName,
+    getNpcInfo,
     getDungeonLabel,
     getLanguage: () => currentLanguage,
     onChange,

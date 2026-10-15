@@ -76,6 +76,12 @@ fn les_objets_de_la_capture_du_15_10_sont_vus() {
     let decor: Vec<_> = instantane().into_iter().filter(|o| o.genre == Genre::Decor).collect();
     assert!(decor.len() >= 4, "au moins 4 objets de décor, trouvés : {}", decor.len());
     assert!(decor.iter().all(|o| o.modele != 0 && o.x.abs() < 450_000.0 && o.y.abs() < 450_000.0));
+    // Les monstres : la capture en contient 43 de catégorie 4, 5 ou 12, à 10 m près.
+    let mobs: Vec<_> = instantane().into_iter().filter(|o| o.genre == Genre::Mob).collect();
+    assert!(mobs.len() >= 25, "au moins 25 points de monstres, trouvés : {}", mobs.len());
+    assert!(mobs.iter().all(|o| o.modele != 0 && o.x.abs() < 450_000.0 && o.y.abs() < 450_000.0));
+    assert!(mobs.iter().any(|o| o.modele == 2_950_007), "le type 2950007 doit être vu");
+    assert!(mobs.iter().any(|o| o.modele == 2_950_139), "le type 2950139 (catégorie 12) doit être vu");
     // Le modèle 1300908 de l'arrivée de 12:27:13.
     assert!(decor.iter().any(|o| o.modele == 1_300_908), "le modèle 1300908 doit être vu");
 }

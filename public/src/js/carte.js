@@ -102,7 +102,7 @@
   const voirCat = (id) => (filtres["cat_" + id] === undefined ? id !== "autre" : filtres["cat_" + id]);
   const voirNoms = () => filtres.noms !== false;
 
-  const etat = { donnees: null, envobjs: null, id: null, echelle: 1, dx: 0, dy: 0 };
+  const etat = { recherche: "", donnees: null, envobjs: null, id: null, echelle: 1, dx: 0, dy: 0 };
   const el = {};
 
   function creer(tag, classe, texte) {
@@ -110,6 +110,24 @@
     if (classe) n.className = classe;
     if (texte != null) n.textContent = texte;
     return n;
+  }
+
+  // Minuscules sans accents, pour que « elementaire » trouve « Élémentaire ».
+  const normaliser = (t) => String(t).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+
+  // Fiche et nom d'un PNJ d'après la table du meter ; sans nom connu : « Monstre #type ».
+  const fichePnj = (type) => (window.i18n && window.i18n.getNpcInfo ? window.i18n.getNpcInfo(type) : null);
+  const nomPnj = (type) => {
+    const nom = window.i18n && window.i18n.getNpcName ? window.i18n.getNpcName(type, "") : "";
+    return nom || "Monstre #" + type;
+  };
+
+  // Le nom contient la recherche, ou le numéro de type commence par ce qui est saisi (« #2950 »).
+  function correspond(nom, type) {
+    const q = etat.recherche;
+    if (normaliser(nom).includes(q)) return true;
+    const chiffres = q.replace("#", "");
+    return /^\d+$/.test(chiffres) && String(type).includes(chiffres);
   }
 
   // Pictogramme au trait, construit sans `innerHTML`.
@@ -167,6 +185,15 @@
       label.append(case_, document.createTextNode(" " + c.libelle + (c.disponible ? "" : " (à venir)")));
       el.filtres.append(label);
     }
+
+    const recherche = creer("input", "carteRecherche");
+    recherche.type = "search";
+    recherche.placeholder = "Chercher un monstre…";
+    recherche.addEventListener("input", () => {
+      etat.recherche = normaliser(recherche.value.trim());
+      rafraichirObjets();
+    });
+    el.filtres.append(recherche);
 
     const noms = creer("label", "carteFiltre carteFiltreExtra");
     const caseNoms = creer("input");
@@ -336,7 +363,7 @@
     if (idCourant !== etat.id) return;
     const signature = [
       idCourant, CATEGORIES.map((k) => (voirCat(k.id) ? 1 : 0)).join(""),
-      !!etat.envobjs, Math.floor(Date.now() / 60000), JSON.stringify(objets),
+      !!etat.envobjs, !!fichePnj(2000002), window.i18n && window.i18n.getLanguage ? window.i18n.getLanguage() : "", etat.recherche, Math.floor(Date.now() / 60000), JSON.stringify(objets),
     ].join(":");
     if (signature === etat.signatureObjets) return;
     etat.signatureObjets = signature;
@@ -349,13 +376,18 @@
     const compte = {};
     let affiches = 0;
     for (const o of objets) {
+      const npc = o.genre === "mob" ? fichePnj(o.modele) : null;
+      if (npc && npc.isDummy) continue; // mannequins d'entraînement
       const info = o.genre === "decor" ? classer(etat.envobjs, o.modele) : null;
-      const cat = categoriser(etat.envobjs, o.modele, o.genre);
+      const nom = o.genre === "mob" ? nomPnj(o.modele) : info ? info.nom : "Âme (objet éphémère)";
+      const cat = categoriser(etat.envobjs, o.modele, o.genre, npc);
       compte[cat] = (compte[cat] || 0) + 1;
       if (!voirCat(cat)) continue;
+      // Une recherche ne montre que les monstres dont le nom, ou le numéro de type, correspond.
+      if (etat.recherche && !(o.genre === "mob" && correspond(nom, o.modele))) continue;
       const pos = projeter(carte, o.x / unite, o.y / unite);
       if (!pos) continue;
-      calque.append(creerPastille(o, info, cat, pos));
+      calque.append(creerPastille(o, info, cat, pos, nom));
       affiches++;
     }
     for (const k of CATEGORIES) {
@@ -363,7 +395,7 @@
       el.etiquettesCat[k.id].classList.toggle("vide", !compte[k.id]);
     }
     el.note.textContent = objets.length
-      ? `${affiches} objet(s) affiché(s)`
+      ? (etat.recherche ? `${affiches} point(s) pour « ${etat.recherche} »` : `${affiches} objet(s) affiché(s)`)
         + (etat.envobjs ? "" : " — noms indisponibles (données non téléchargées)")
         + " — carte du jeu non identifiée : affichés sur la carte choisie."
       : "";
@@ -371,9 +403,8 @@
 
   // Une pastille : disque coloré avec le pictogramme de sa catégorie, son nom à côté
   // (visible à partir d'un certain zoom) et le détail au survol.
-  function creerPastille(o, info, cat, pos) {
+  function creerPastille(o, info, cat, pos, nom) {
     const def = CAT[cat] || CAT.autre;
-    const nom = info ? info.nom : (o.genre === "ephemere" ? "Âme (objet éphémère)" : "Monstre");
     const pt = creer("div", "carteObjet");
     pt.style.left = pos.x + "px";
     pt.style.top = pos.y + "px";
@@ -382,7 +413,7 @@
     rond.append(pictogramme(def.picto));
     let detail = `${nom} — ${def.libelle}`;
     if (info && info.surCarteDuJeu) detail += " · déjà sur la carte du jeu";
-    if (o.genre === "decor") detail += ` · vu ${o.fois_vu} fois`;
+    if (o.genre === "decor" || o.genre === "mob") detail += ` · vu ${o.fois_vu} fois`;
     const quand = ilYa(o.vu_a);
     if (quand) detail += ` · ${quand}`;
 

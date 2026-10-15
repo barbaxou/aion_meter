@@ -62,9 +62,10 @@
   }
 
   // `genre` vaut « decor » (objet du référentiel), « ephemere » (âme), « mob » (monstre).
-  function categoriser(envobjs, modele, genre) {
+  // `npc` : la fiche du PNJ (table de noms du meter), pour reconnaître un boss.
+  function categoriser(envobjs, modele, genre, npc) {
     if (genre === "ephemere") return "ame";
-    if (genre === "mob") return "monstre";
+    if (genre === "mob") return npc && npc.isBoss && !npc.isDummy ? "boss" : "monstre";
     const e = envobjs ? envobjs[String(modele)] : null;
     if (!e) return "autre";
     if (String(e.category || "").startsWith("HiddenCube")) return "cube";
