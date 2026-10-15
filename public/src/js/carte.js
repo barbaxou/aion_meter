@@ -2,9 +2,8 @@
 //
 // Lit le cache des fonds de carte (`fonds/carte/…`, téléchargé depuis le site)
 // par le protocole `fonds://`. Aucune dépendance : zoom et déplacement sont
-// écrits ici. Les calques sont décrits dans CALQUES ; les catégories qui
-// viendront du trafic du jeu (boss, failles, ressources, cubes) y figurent déjà,
-// grisées, et n'attendent que leur fonction `rendre`.
+// écrits ici. Les calques de fond sont décrits dans CALQUES ; les objets vus en
+// jouant se filtrent par catégorie (voir `carteCategories.js`).
 (function (racine) {
   "use strict";
 
@@ -26,13 +25,12 @@
     { id: "fond", libelle: "Fond", disponible: true },
     { id: "chemins", libelle: "Chemins", disponible: true },
     { id: "lieux", libelle: "Lieux nommés", disponible: true },
-    // Objets vus passer dans le trafic du jeu (décodés par le meter, gardés en local).
-    { id: "decor", libelle: "Objets du décor", disponible: true },
-    { id: "ephemeres", libelle: "Objets éphémères", disponible: true },
   ];
 
   // Échelle (écran / pixels de la carte) sous laquelle les noms sont masqués.
   const SEUIL_NOMS = 0.3;
+  // Même chose pour les noms des objets vus, plus nombreux : il faut zoomer davantage.
+  const SEUIL_NOMS_OBJETS = 0.5;
 
   // Ce que `envobjs.json` (référentiel du site) dit d'un modèle d'objet : son nom, et
   // si la carte du jeu l'affiche déjà. Les modèles absents du référentiel sont
@@ -71,6 +69,18 @@
 
   // ---- Vue ------------------------------------------------------------------
 
+  if (!window.CarteCategories) {
+    // Ne devrait pas arriver (balise script dans index.html) : on le dit plutôt que de laisser une fenêtre vide.
+    document.addEventListener("DOMContentLoaded", () => {
+      const panneau = document.querySelector(".cartePanel");
+      if (panneau) panneau.textContent = "Catégories d'objets introuvables (carteCategories.js non chargé).";
+    });
+    return;
+  }
+  const { CATEGORIES, categoriser } = window.CarteCategories;
+  const CAT = Object.fromEntries(CATEGORIES.map((c) => [c.id, c]));
+  const SVG = "http://www.w3.org/2000/svg";
+
   const BASE = /Windows/i.test(navigator.userAgent) ? "http://fonds.localhost/" : "fonds://localhost/";
   const url = (chemin) => BASE + "carte/" + chemin;
   const CLE_FILTRES = "carte.filtres";
@@ -88,6 +98,9 @@
     { id: "jeu", libelle: "Déjà sur la carte du jeu" },
     { id: "bruit", libelle: "Bruit (pianos, points d'arrivée)" },
   ];
+  // Une catégorie est affichée tant qu'on ne l'a pas décochée.
+  const voirCat = (id) => filtres["cat_" + id] !== false;
+  const voirNoms = () => filtres.noms !== false;
   const visible = (c) => c.inconnu || ((!c.surCarteDuJeu || voir("jeu")) && (!c.bruit || voir("bruit")));
 
   const etat = { donnees: null, envobjs: null, id: null, echelle: 1, dx: 0, dy: 0 };
@@ -98,6 +111,34 @@
     if (classe) n.className = classe;
     if (texte != null) n.textContent = texte;
     return n;
+  }
+
+  // Pictogramme au trait, construit sans `innerHTML`.
+  function pictogramme(trace) {
+    const svg = document.createElementNS(SVG, "svg");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("width", "14");
+    svg.setAttribute("height", "14");
+    const path = document.createElementNS(SVG, "path");
+    path.setAttribute("d", trace);
+    path.setAttribute("fill", "none");
+    path.setAttribute("stroke", "#fff");
+    path.setAttribute("stroke-width", "2.2");
+    path.setAttribute("stroke-linecap", "round");
+    path.setAttribute("stroke-linejoin", "round");
+    svg.append(path);
+    return svg;
+  }
+
+  // « vu il y a 3 jours », pour l'infobulle et pour estomper les cubes anciens.
+  function ilYa(ms) {
+    const d = Date.now() - ms;
+    if (!(d >= 0)) return "";
+    if (d < 60000) return "vu à l'instant";
+    if (d < 3600000) return `vu il y a ${Math.floor(d / 60000)} min`;
+    if (d < 86400000) return `vu il y a ${Math.floor(d / 3600000)} h`;
+    const j = Math.floor(d / 86400000);
+    return `vu il y a ${j} jour${j > 1 ? "s" : ""}`;
   }
 
   function construire() {
@@ -142,12 +183,48 @@
       el.filtres.append(label);
     }
 
+    const noms = creer("label", "carteFiltre carteFiltreExtra");
+    const caseNoms = creer("input");
+    caseNoms.type = "checkbox";
+    caseNoms.checked = voirNoms();
+    caseNoms.addEventListener("change", () => {
+      filtres.noms = caseNoms.checked;
+      ecrire(CLE_FILTRES, JSON.stringify(filtres));
+      appliquerTransform();
+    });
+    noms.append(caseNoms, document.createTextNode(" Noms"));
+    el.filtres.append(noms);
+
+    // Une case par catégorie d'objet, avec son pictogramme et son compteur.
+    el.categories = creer("div", "carteFiltres carteCategories");
+    el.compteurs = {};
+    el.etiquettesCat = {};
+    for (const c of CATEGORIES) {
+      const label = creer("label", "carteFiltre carteCat vide");
+      const case_ = creer("input");
+      case_.type = "checkbox";
+      case_.checked = voirCat(c.id);
+      case_.addEventListener("change", () => {
+        filtres["cat_" + c.id] = case_.checked;
+        ecrire(CLE_FILTRES, JSON.stringify(filtres));
+        rafraichirObjets();
+      });
+      const rond = creer("span", "carteCatRond");
+      rond.style.background = c.couleur;
+      rond.append(pictogramme(c.picto));
+      const compteur = creer("span", "carteCatNombre", " (0)");
+      label.append(case_, rond, document.createTextNode(" " + c.libelle), compteur);
+      el.compteurs[c.id] = compteur;
+      el.etiquettesCat[c.id] = label;
+      el.categories.append(label);
+    }
+
     el.vue = creer("div", "carteVue");
     el.monde = creer("div", "carteMonde");
     el.vue.append(el.monde);
     el.message = creer("div", "carteMessage");
     el.note = creer("div", "carteNote");
-    panneau.append(el.barre, el.filtres, el.vue, el.note, el.message);
+    panneau.append(el.barre, el.filtres, el.categories, el.vue, el.note, el.message);
 
     el.choix.addEventListener("change", () => afficher(el.choix.value));
     brancherSouris();
@@ -167,6 +244,7 @@
     el.monde.style.setProperty("--inverse", String(1 / etat.echelle));
     // Trop dézoomé, les noms se chevauchent : on garde les points seuls.
     el.monde.classList.toggle("sansNoms", etat.echelle < SEUIL_NOMS);
+    el.monde.classList.toggle("sansNomsObjets", !voirNoms() || etat.echelle < SEUIL_NOMS_OBJETS);
   }
 
   function reinitialiserVue() {
@@ -247,12 +325,9 @@
       places++;
     }
     el.monde.append(lieux);
-    for (const [id, classe] of [["decor", "carteObjetDecor"], ["ephemeres", "carteObjetEphemere"]]) {
-      const calque = creer("div", "carteCalque");
-      calque.dataset.calque = id;
-      calque.dataset.classe = classe;
-      el.monde.append(calque);
-    }
+    const objets = creer("div", "carteCalque");
+    objets.dataset.calque = "objets";
+    el.monde.append(objets);
     rafraichirObjets();
     appliquerFiltres();
     message(c.world ? "" : "Cette carte n'a pas de repère de position : le fond seul est affiché.");
@@ -269,41 +344,43 @@
     const idCourant = etat.id;
     const c = etat.donnees?.maps?.[idCourant];
     if (!c || !c.world) { el.note.textContent = ""; return; }
+    await chargerReferentiel();
     let objets = [];
     try { objets = (await window.javaBridge.getObjetsVus()) || []; } catch {}
     // La carte a changé pendant l'appel : ces objets seront redessinés au tour suivant.
     if (idCourant !== etat.id) return;
-    const signature = [idCourant, voir("jeu"), voir("bruit"), !!etat.envobjs, JSON.stringify(objets)].join(":");
+    const signature = [
+      idCourant, voir("jeu"), voir("bruit"), CATEGORIES.map((k) => (voirCat(k.id) ? 1 : 0)).join(""),
+      !!etat.envobjs, Math.floor(Date.now() / 3600000), JSON.stringify(objets),
+    ].join(":");
     if (signature === etat.signatureObjets) return;
     etat.signatureObjets = signature;
     // Les positions du jeu sont en centimètres ; `projeter` attend des mètres.
     const unite = etat.donnees.unitFactor || CM_PAR_M;
     const carte = { ...c, unitFactor: unite };
+    const calque = el.monde.querySelector('[data-calque="objets"]');
+    if (!calque) return;
+    calque.textContent = "";
+    const compte = {};
     let affiches = 0, masquesJeu = 0, masquesBruit = 0;
-    for (const id of ["decor", "ephemeres"]) {
-      const calque = el.monde.querySelector(`[data-calque="${id}"]`);
-      if (!calque) continue;
-      calque.textContent = "";
-      const genre = id === "decor" ? "decor" : "ephemere";
-      for (const o of objets.filter((o) => o.genre === genre)) {
-        const info = genre === "decor" ? classer(etat.envobjs, o.modele) : null;
-        if (info && !visible(info)) {
-          if (info.surCarteDuJeu && !voir("jeu")) masquesJeu++;
-          else masquesBruit++;
-          continue;
-        }
-        const pos = projeter(carte, o.x / unite, o.y / unite);
-        if (!pos) continue;
-        const recolte = info && info.usage === "GatherSource";
-        const pt = creer("div", "carteObjet " + calque.dataset.classe + (recolte ? " carteObjetRecolte" : ""));
-        pt.style.left = pos.x + "px";
-        pt.style.top = pos.y + "px";
-        pt.title = info
-          ? `${info.nom}${info.usage ? " (" + info.usage + ")" : ""} · vu ${o.fois_vu} fois`
-          : "Objet éphémère";
-        calque.append(pt);
-        affiches++;
+    for (const o of objets) {
+      const info = o.genre === "decor" ? classer(etat.envobjs, o.modele) : null;
+      if (info && !visible(info)) {
+        if (info.surCarteDuJeu && !voir("jeu")) masquesJeu++;
+        else masquesBruit++;
+        continue;
       }
+      const cat = categoriser(etat.envobjs, o.modele, o.genre);
+      compte[cat] = (compte[cat] || 0) + 1;
+      if (!voirCat(cat)) continue;
+      const pos = projeter(carte, o.x / unite, o.y / unite);
+      if (!pos) continue;
+      calque.append(creerPastille(o, info, cat, pos));
+      affiches++;
+    }
+    for (const k of CATEGORIES) {
+      el.compteurs[k.id].textContent = ` (${compte[k.id] || 0})`;
+      el.etiquettesCat[k.id].classList.toggle("vide", !compte[k.id]);
     }
     const masques = masquesJeu + masquesBruit;
     el.note.textContent = objets.length
@@ -311,6 +388,46 @@
         + (etat.envobjs ? "" : " — noms indisponibles (données non téléchargées)")
         + " — carte du jeu non identifiée : affichés sur la carte choisie."
       : "";
+  }
+
+  // Une pastille : disque coloré avec le pictogramme de sa catégorie, son nom à côté
+  // (visible à partir d'un certain zoom) et le détail au survol.
+  function creerPastille(o, info, cat, pos) {
+    const def = CAT[cat] || CAT.autre;
+    const nom = info ? info.nom : (o.genre === "ephemere" ? "Âme (objet éphémère)" : "Monstre");
+    const pt = creer("div", "carteObjet");
+    pt.style.left = pos.x + "px";
+    pt.style.top = pos.y + "px";
+    const rond = creer("div", "carteObjetRond");
+    rond.style.background = def.couleur;
+    rond.append(pictogramme(def.picto));
+    let detail = `${nom} — ${def.libelle}`;
+    if (o.genre === "decor") detail += ` · vu ${o.fois_vu} fois`;
+    const quand = ilYa(o.vu_a);
+    if (quand) detail += ` · ${quand}`;
+    if (cat === "cube") {
+      // Un cube n'est pas une zone : c'est l'endroit où il a été vu. On estompe les
+      // anciens (il a pu être pris ou disparaître) et on cerne ceux qui reviennent.
+      const sombre = etat.envobjs?.[String(o.modele)]?.category === "HiddenCubeDark";
+      if (sombre) rond.style.background = "#9b3f86";
+      const jours = (Date.now() - o.vu_a) / 86400000;
+      pt.style.opacity = jours <= 1 ? "1" : jours <= 7 ? "0.75" : "0.5";
+      if (o.fois_vu >= 3) rond.classList.add("carteObjetAnneau");
+      detail = `${nom} (${sombre ? "sombre" : "clair"}) · vu ici${o.fois_vu > 1 ? ` ${o.fois_vu} fois` : ""} · ${quand}`;
+    }
+    rond.title = detail;
+    pt.append(rond, creer("span", "carteObjetNom", nom));
+    return pt;
+  }
+
+  // Référentiel des objets (noms, présence sur la carte du jeu) : facultatif, et
+  // redemandé tant qu'il manque, car il peut arriver pendant que la fenêtre est ouverte.
+  async function chargerReferentiel() {
+    if (etat.envobjs) return;
+    try {
+      const r = await fetch(BASE + "envobjs.json");
+      if (r.ok) etat.envobjs = (await r.json()).envobjs || null;
+    } catch {}
   }
 
   async function demarrer() {
@@ -332,11 +449,7 @@
       message("Fonds illisibles (" + err.message + "). Ils seront retéléchargés à la prochaine synchronisation.");
       return;
     }
-    // Référentiel des objets (noms, présence sur la carte du jeu) : facultatif.
-    try {
-      const r = await fetch(BASE + "envobjs.json");
-      if (r.ok) etat.envobjs = (await r.json()).envobjs || null;
-    } catch {}
+    await chargerReferentiel();
     const ordre = Object.keys(CAMPS);
     const cartes = Object.entries(etat.donnees.maps);
     for (const camp of ordre) {
