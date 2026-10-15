@@ -49,7 +49,7 @@ pub fn demarrer(dossier: PathBuf) {
                 noter_erreur("partage décoché ou jeton absent");
                 continue;
             };
-            match synchroniser(&jeton, &url_depuis(&url), "carte", &dossier).await {
+            match synchroniser(&jeton, &url_depuis(&url), JEU_DE_FICHIERS, &dossier).await {
                 Ok(Bilan::Differe) => {
                     // Passage normal toutes les 10 minutes : on ne remplace pas
                     // le dernier vrai bilan par « différé ».
@@ -72,8 +72,18 @@ const TAILLE_MAX_MANIFESTE: usize = 256 * 1024;
 /// Plafond d'un fichier : le plus gros fond annoncé tourne autour de 1,2 Mo.
 const TAILLE_MAX_FICHIER: u64 = 32 * 1024 * 1024;
 
-const FICHIER_VERSION: &str = "version.txt";
-const FICHIER_APPEL: &str = "dernier_appel.txt";
+// Les deux fichiers portent le nom du jeu de fichiers demandé (`tout`) : le serveur ne
+// connaît qu'une `knownVersion`, et un cache laissé par l'ancien appel `carte`
+// (version.txt, dernier_appel.txt) ferait répondre `unchanged` sans les données,
+// ou différerait l'appel d'un jour.
+const JEU_DE_FICHIERS: &str = "tout";
+const FICHIER_VERSION: &str = "version-tout.txt";
+const FICHIER_APPEL: &str = "dernier_appel-tout.txt";
+
+/// Version du jeu de fichiers déjà en cache, s'il y en a une.
+pub fn version_connue(dossier: &Path) -> Option<String> {
+    lire_texte(&dossier.join(FICHIER_VERSION))
+}
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct Fichier {
@@ -180,7 +190,7 @@ pub fn etat(dossier: &Path) -> EtatFonds {
     let bilan = DERNIER_BILAN.lock().clone();
     EtatFonds {
         cache: dossier.join("carte").join("carte.json").is_file(),
-        version: lire_texte(&dossier.join(FICHIER_VERSION)),
+        version: version_connue(dossier),
         dernier_appel: lire_nombre(&dossier.join(FICHIER_APPEL)),
         dernier_bilan: if bilan.is_empty() { "aucun passage depuis le lancement".to_string() } else { bilan },
     }
@@ -313,7 +323,7 @@ pub async fn synchroniser(jeton: &str, url: &str, set: &str, dossier: &Path) -> 
         .map_err(|e| e.to_string())?;
 
     let mut corps = serde_json::json!({ "token": jeton, "set": set });
-    if let Some(v) = lire_texte(&dossier.join(FICHIER_VERSION)) {
+    if let Some(v) = version_connue(dossier) {
         corps["knownVersion"] = serde_json::Value::String(v);
     }
     let reponse = client
@@ -433,7 +443,7 @@ mod tests {
         let m = Manifeste { version: "113-2026-10-01".into(), unchanged: false, files: vec![f] };
         let bilan = appliquer(&d, &m, |_| async { Err("ne doit pas être appelé".to_string()) }).await;
         assert_eq!(bilan, Bilan::Synchronise { version: m.version.clone(), ecrits: 0, presents: 1, refuses: 0 });
-        assert_eq!(lire_texte(&d.join(FICHIER_VERSION)).as_deref(), Some("113-2026-10-01"));
+        assert_eq!(version_connue(&d).as_deref(), Some("113-2026-10-01"));
     }
 
     #[tokio::test]
@@ -456,6 +466,37 @@ mod tests {
         let bilan = appliquer(&d, &m, |_| async { Ok(b"x".to_vec()) }).await;
         assert_eq!(bilan, Bilan::Synchronise { version: "v".into(), ecrits: 0, presents: 0, refuses: 2 });
         assert!(!d.parent().unwrap().join("evasion.txt").exists());
+    }
+
+    #[test]
+    fn le_cache_d_un_ancien_lancement_n_empeche_pas_l_appel_tout() {
+        // Avant le jeu de fichiers `tout`, la version retenue s'appelait version.txt
+        // et ne couvrait que `carte` : la présenter au serveur ferait répondre
+        // `unchanged` alors que les données manquent.
+        let d = dossier("ancienne-version");
+        std::fs::write(d.join("version.txt"), "113-2026-10-01").unwrap();
+        std::fs::write(d.join("dernier_appel.txt"), "9999999999").unwrap();
+        assert_eq!(version_connue(&d), None);
+        assert!(doit_appeler(lire_nombre(&d.join(FICHIER_APPEL)), 1_000));
+        std::fs::write(d.join(FICHIER_VERSION), "113-2026-10-01").unwrap();
+        assert_eq!(version_connue(&d).as_deref(), Some("113-2026-10-01"));
+    }
+
+    #[tokio::test]
+    async fn un_manifeste_tout_ne_telecharge_que_les_donnees_manquantes() {
+        let d = dossier("tout");
+        std::fs::create_dir_all(d.join("carte")).unwrap();
+        std::fs::write(d.join("carte/carte.json"), b"{}").unwrap();
+        let carte = fichier("carte/carte.json", b"{}");
+        let envobjs = fichier("envobjs.json", b"{\"envobjs\":{}}");
+        let m = Manifeste { version: "113-2026-10-01".into(), unchanged: false, files: vec![carte, envobjs] };
+        let bilan = appliquer(&d, &m, |url| async move {
+            assert!(url.ends_with("envobjs.json"), "seul envobjs.json devait être demandé : {url}");
+            Ok(b"{\"envobjs\":{}}".to_vec())
+        })
+        .await;
+        assert_eq!(bilan, Bilan::Synchronise { version: m.version.clone(), ecrits: 1, presents: 1, refuses: 0 });
+        assert_eq!(servir(&d, "/envobjs.json"), Some((b"{\"envobjs\":{}}".to_vec(), "application/json")));
     }
 
     #[test]
@@ -504,10 +545,10 @@ mod tests {
         let d = std::env::temp_dir().join("xiiinrv-fonds-reel");
         // Le délai d'un jour du meter est levé : on veut la réponse du serveur.
         let _ = std::fs::remove_file(d.join(FICHIER_APPEL));
-        let version_avant = lire_texte(&d.join(FICHIER_VERSION));
+        let version_avant = version_connue(&d);
         println!("version en cache avant l'appel : {version_avant:?}");
 
-        let r = synchroniser(&jeton, &url_par_defaut(), "carte", &d).await;
+        let r = synchroniser(&jeton, &url_par_defaut(), JEU_DE_FICHIERS, &d).await;
         println!("appel : {r:?}");
         match r {
             Err(e) => assert!(e.contains("429"), "refus inattendu : {e}"),

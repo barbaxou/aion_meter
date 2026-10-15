@@ -6987,6 +6987,8 @@ html.carteWindow .cartePanel {
 .carteObjet::before { content: ""; position: absolute; left: -5px; top: -5px; width: 10px; height: 10px; box-sizing: border-box; border-radius: 50%; box-shadow: 0 0 0 1px #000; pointer-events: auto; }
 .carteObjetDecor::before { background: #5ad1ff; }
 .carteObjetEphemere::before { background: #c07dff; }
+.carteObjetRecolte::before { background: #ffd24a; }
+.carteFiltreExtra { border-left: 1px solid #2c3a4d; padding-left: 12px; }
 .carteNote { padding: 4px 10px; font-size: 11px; opacity: 0.65; }
 .carteNote:empty { display: none; }
 .carteMonde.sansNoms .carteLieuNom { display: none; }

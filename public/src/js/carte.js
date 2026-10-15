@@ -34,14 +34,38 @@
   // Échelle (écran / pixels de la carte) sous laquelle les noms sont masqués.
   const SEUIL_NOMS = 0.3;
 
+  // Ce que `envobjs.json` (référentiel du site) dit d'un modèle d'objet : son nom, et
+  // si la carte du jeu l'affiche déjà. Les modèles absents du référentiel sont
+  // « inconnus » et restent affichés : ils peuvent valoir le coup.
+  const USAGES_BRUIT = ["LandingSensor", "TriggerActor", "Overlap", "Prop"];
+
+  function classer(envobjs, modele) {
+    const e = envobjs ? envobjs[String(modele)] : null;
+    if (!e) {
+      return { nom: "Modèle " + modele, usage: null, surCarteDuJeu: false, bruit: false, inconnu: true };
+    }
+    return {
+      nom: e.name || e.internal || "Modèle " + modele,
+      usage: e.usage || null,
+      surCarteDuJeu: !!(e.onWorldMap || e.onMiniMap),
+      bruit: USAGES_BRUIT.includes(e.usage),
+      inconnu: false,
+    };
+  }
+
+  // Affiché tant qu'on n'a pas demandé à voir ce que le jeu montre déjà, ni le bruit.
+  function afficheParDefaut(c) {
+    return c.inconnu || (!c.surCarteDuJeu && !c.bruit);
+  }
+
   const CAMPS = { asmodien: "Asmodiens", elyos: "Élyséens", abysse: "Abysses" };
 
   if (racine && typeof module !== "undefined" && module.exports) {
-    module.exports = { projeter, CALQUES };
+    module.exports = { projeter, CALQUES, classer, afficheParDefaut };
     return;
   }
   if (typeof window === "undefined" || window.A2_VIEW !== "carte") {
-    window.Carte = { projeter, CALQUES };
+    window.Carte = { projeter, CALQUES, classer, afficheParDefaut };
     return;
   }
 
@@ -58,8 +82,15 @@
   let filtres = {};
   try { filtres = JSON.parse(lire(CLE_FILTRES) || "{}") || {}; } catch { filtres = {}; }
   const actif = (id) => filtres[id] !== false;
+  // Les deux cases « réafficher » sont décochées tant qu'on ne les a pas cochées.
+  const voir = (id) => filtres[id] === true;
+  const EXTRAS = [
+    { id: "jeu", libelle: "Déjà sur la carte du jeu" },
+    { id: "bruit", libelle: "Bruit (pianos, points d'arrivée)" },
+  ];
+  const visible = (c) => c.inconnu || ((!c.surCarteDuJeu || voir("jeu")) && (!c.bruit || voir("bruit")));
 
-  const etat = { donnees: null, id: null, echelle: 1, dx: 0, dy: 0 };
+  const etat = { donnees: null, envobjs: null, id: null, echelle: 1, dx: 0, dy: 0 };
   const el = {};
 
   function creer(tag, classe, texte) {
@@ -94,6 +125,20 @@
         appliquerFiltres();
       });
       label.append(case_, document.createTextNode(" " + c.libelle + (c.disponible ? "" : " (à venir)")));
+      el.filtres.append(label);
+    }
+
+    for (const x of EXTRAS) {
+      const label = creer("label", "carteFiltre carteFiltreExtra");
+      const case_ = creer("input");
+      case_.type = "checkbox";
+      case_.checked = voir(x.id);
+      case_.addEventListener("change", () => {
+        filtres[x.id] = case_.checked;
+        ecrire(CLE_FILTRES, JSON.stringify(filtres));
+        rafraichirObjets();
+      });
+      label.append(case_, document.createTextNode(" " + x.libelle));
       el.filtres.append(label);
     }
 
@@ -228,29 +273,43 @@
     try { objets = (await window.javaBridge.getObjetsVus()) || []; } catch {}
     // La carte a changé pendant l'appel : ces objets seront redessinés au tour suivant.
     if (idCourant !== etat.id) return;
-    const signature = idCourant + ":" + JSON.stringify(objets);
+    const signature = [idCourant, voir("jeu"), voir("bruit"), !!etat.envobjs, JSON.stringify(objets)].join(":");
     if (signature === etat.signatureObjets) return;
     etat.signatureObjets = signature;
     // Les positions du jeu sont en centimètres ; `projeter` attend des mètres.
     const unite = etat.donnees.unitFactor || CM_PAR_M;
     const carte = { ...c, unitFactor: unite };
+    let affiches = 0, masquesJeu = 0, masquesBruit = 0;
     for (const id of ["decor", "ephemeres"]) {
       const calque = el.monde.querySelector(`[data-calque="${id}"]`);
       if (!calque) continue;
       calque.textContent = "";
       const genre = id === "decor" ? "decor" : "ephemere";
       for (const o of objets.filter((o) => o.genre === genre)) {
+        const info = genre === "decor" ? classer(etat.envobjs, o.modele) : null;
+        if (info && !visible(info)) {
+          if (info.surCarteDuJeu && !voir("jeu")) masquesJeu++;
+          else masquesBruit++;
+          continue;
+        }
         const pos = projeter(carte, o.x / unite, o.y / unite);
         if (!pos) continue;
-        const pt = creer("div", "carteObjet " + calque.dataset.classe);
+        const recolte = info && info.usage === "GatherSource";
+        const pt = creer("div", "carteObjet " + calque.dataset.classe + (recolte ? " carteObjetRecolte" : ""));
         pt.style.left = pos.x + "px";
         pt.style.top = pos.y + "px";
-        pt.title = genre === "decor" ? `Modèle ${o.modele} · vu ${o.fois_vu} fois` : "Objet éphémère";
+        pt.title = info
+          ? `${info.nom}${info.usage ? " (" + info.usage + ")" : ""} · vu ${o.fois_vu} fois`
+          : "Objet éphémère";
         calque.append(pt);
+        affiches++;
       }
     }
+    const masques = masquesJeu + masquesBruit;
     el.note.textContent = objets.length
-      ? `${objets.length} objet(s) vu(s) en jouant — carte du jeu non identifiée : affichés sur la carte choisie.`
+      ? `${affiches} objet(s) affiché(s), ${masques} masqué(s) (carte du jeu : ${masquesJeu}, bruit : ${masquesBruit})`
+        + (etat.envobjs ? "" : " — noms indisponibles (données non téléchargées)")
+        + " — carte du jeu non identifiée : affichés sur la carte choisie."
       : "";
   }
 
@@ -273,6 +332,11 @@
       message("Fonds illisibles (" + err.message + "). Ils seront retéléchargés à la prochaine synchronisation.");
       return;
     }
+    // Référentiel des objets (noms, présence sur la carte du jeu) : facultatif.
+    try {
+      const r = await fetch(BASE + "envobjs.json");
+      if (r.ok) etat.envobjs = (await r.json()).envobjs || null;
+    } catch {}
     const ordre = Object.keys(CAMPS);
     const cartes = Object.entries(etat.donnees.maps);
     for (const camp of ordre) {
