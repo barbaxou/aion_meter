@@ -51,7 +51,8 @@
     };
   }
 
-  // Un objet est « confirmé actif » quand le meter vient de le voir : un éphémère
+  // Piste gardée pour plus tard (cercle vert, retiré de l'affichage pour l'instant) : un
+  // objet est « confirmé actif » quand le meter vient de le voir : un éphémère
   // présent, ou un objet vu dans les dernières minutes. Passé ce délai on ne sait plus
   // s'il est toujours là (le jeu n'annonce pas toutes les disparitions) : pas de cercle.
   const CONFIRME_MS = 5 * 60 * 1000;
@@ -346,8 +347,7 @@
     if (!calque) return;
     calque.textContent = "";
     const compte = {};
-    let affiches = 0, actifs = 0;
-    const maintenant = Date.now();
+    let affiches = 0;
     for (const o of objets) {
       const info = o.genre === "decor" ? classer(etat.envobjs, o.modele) : null;
       const cat = categoriser(etat.envobjs, o.modele, o.genre);
@@ -355,17 +355,15 @@
       if (!voirCat(cat)) continue;
       const pos = projeter(carte, o.x / unite, o.y / unite);
       if (!pos) continue;
-      const actif = confirme(o, maintenant);
-      calque.append(creerPastille(o, info, cat, pos, actif));
+      calque.append(creerPastille(o, info, cat, pos));
       affiches++;
-      if (actif) actifs++;
     }
     for (const k of CATEGORIES) {
       el.compteurs[k.id].textContent = ` (${compte[k.id] || 0})`;
       el.etiquettesCat[k.id].classList.toggle("vide", !compte[k.id]);
     }
     el.note.textContent = objets.length
-      ? `${affiches} objet(s) affiché(s), dont ${actifs} confirmé(s) actif(s) (cercle vert : vu à l'instant)`
+      ? `${affiches} objet(s) affiché(s)`
         + (etat.envobjs ? "" : " — noms indisponibles (données non téléchargées)")
         + " — carte du jeu non identifiée : affichés sur la carte choisie."
       : "";
@@ -373,7 +371,7 @@
 
   // Une pastille : disque coloré avec le pictogramme de sa catégorie, son nom à côté
   // (visible à partir d'un certain zoom) et le détail au survol.
-  function creerPastille(o, info, cat, pos, actif) {
+  function creerPastille(o, info, cat, pos) {
     const def = CAT[cat] || CAT.autre;
     const nom = info ? info.nom : (o.genre === "ephemere" ? "Âme (objet éphémère)" : "Monstre");
     const pt = creer("div", "carteObjet");
@@ -382,14 +380,12 @@
     const rond = creer("div", "carteObjetRond");
     rond.style.background = def.couleur;
     rond.append(pictogramme(def.picto));
-    // Cercle vert : le meter vient de le voir. Sans cercle : vu plus tôt, non confirmé.
-    if (actif) rond.classList.add("carteObjetActif");
     let detail = `${nom} — ${def.libelle}`;
     if (info && info.surCarteDuJeu) detail += " · déjà sur la carte du jeu";
     if (o.genre === "decor") detail += ` · vu ${o.fois_vu} fois`;
     const quand = ilYa(o.vu_a);
     if (quand) detail += ` · ${quand}`;
-    detail += actif ? " · actif" : " · non confirmé";
+
     if (cat === "cube") {
       // Un cube n'est pas une zone : c'est l'endroit où il a été vu. On estompe les
       // anciens (il a pu être pris ou disparaître).
@@ -397,7 +393,7 @@
       if (sombre) rond.style.background = "#9b3f86";
       const jours = (Date.now() - o.vu_a) / 86400000;
       pt.style.opacity = jours <= 1 ? "1" : jours <= 7 ? "0.75" : "0.5";
-      detail = `${nom} (${sombre ? "sombre" : "clair"}) · vu ici${o.fois_vu > 1 ? ` ${o.fois_vu} fois` : ""} · ${quand} · ${actif ? "actif" : "non confirmé"}`;
+      detail = `${nom} (${sombre ? "sombre" : "clair"}) · vu ici${o.fois_vu > 1 ? ` ${o.fois_vu} fois` : ""} · ${quand}`;
     }
     rond.title = detail;
     pt.append(rond, creer("span", "carteObjetNom", nom));
