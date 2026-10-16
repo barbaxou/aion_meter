@@ -129,7 +129,24 @@
     "timeline": "Chronologie",
     "mode": {
       "dmg": "Dégâts",
-      "heal": "Soins"
+      "heal": "Soins",
+      "highlights": "Temps forts"
+    },
+    "highlights": {
+      "mostHealing": "Plus de soins prodigués",
+      "ofGroupHealing": "des soins du groupe",
+      "mostDamageTaken": "Plus de dégâts subis",
+      "ofGroupTaken": "des dégâts subis par le groupe",
+      "biggestHit": "Plus gros coup",
+      "firstHit": "Premier coup",
+      "openedFight": "A ouvert le combat",
+      "combat": "Combat",
+      "duration": "Durée",
+      "groupDamage": "Dégâts du groupe",
+      "groupDps": "DPS du groupe",
+      "healingDone": "Soins prodigués",
+      "damageTaken": "Dégâts subis",
+      "deaths": "Morts"
     },
     "refresh": {
       "loading": "Chargement…"

@@ -129,7 +129,24 @@
     "timeline": "Timeline",
     "mode": {
       "dmg": "DMG",
-      "heal": "HEAL"
+      "heal": "HEAL",
+      "highlights": "TOP"
+    },
+    "highlights": {
+      "mostHealing": "Most healing",
+      "ofGroupHealing": "of group healing",
+      "mostDamageTaken": "Most damage taken",
+      "ofGroupTaken": "of group damage taken",
+      "biggestHit": "Biggest hit",
+      "firstHit": "First hit",
+      "openedFight": "Opened the fight",
+      "combat": "Combat",
+      "duration": "Duration",
+      "groupDamage": "Group damage",
+      "groupDps": "Group DPS",
+      "healingDone": "Healing done",
+      "damageTaken": "Damage taken",
+      "deaths": "Deaths"
     },
     "refresh": {
       "loading": "Loading…"

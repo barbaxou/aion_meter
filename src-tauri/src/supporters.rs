@@ -329,6 +329,7 @@ mod tests {
                     level: 0,
                     gear_score: 0,
                     combat_power: 0,
+                    ..Default::default()
                 })
                 .collect(),
             is_train: false,

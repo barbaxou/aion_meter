@@ -865,6 +865,7 @@ impl DpsCalculator {
                         level: roster.map(|m| m.level).unwrap_or(0),
                         gear_score: roster.map(|m| m.gear_score).unwrap_or(0),
                         combat_power: roster.map(|m| m.combat_power).unwrap_or(0),
+                        ..Default::default()
                     }
                 })
                 .collect();
@@ -1010,6 +1011,15 @@ impl DpsCalculator {
             });
         }
 
+        // Les morts du combat affiché : de la première à la dernière frappe, plus 15 s.
+        let fenetre_morts = {
+            let debut = combat_data.values().map(|d| d.first_damage_time).min();
+            let fin = combat_data.values().map(|d| d.last_damage_time).max();
+            match (debut, fin) {
+                (Some(d), Some(f)) => (d, f + 15_000),
+                _ => (0, 0),
+            }
+        };
         let actors: Vec<DetailsActorSummary> = actor_meta.iter()
             .map(|(&id, (nick, job))| {
                 let job_id = if let Some(jc) = JobClass::convert_from_skill(
@@ -1023,17 +1033,33 @@ impl DpsCalculator {
                 ) { jc.class_prefix() } else { 0 };
                 // Aggregate per-actor stats
                 let (mut party_heal, mut regen, mut dmg_recv, mut hits_recv) = (0i64, 0i64, 0i64, 0i32);
+                // « Temps forts » : premier coup, plus gros coup direct et sa compétence.
+                let (mut premier_coup, mut gros_coup, mut gros_coup_code) = (0i64, 0i32, 0i32);
                 for td in combat_data.values() {
                     if let Some(ad) = td.actors.get(&id) {
                         party_heal += ad.party_heal;
                         regen += ad.regen;
                         dmg_recv += ad.damage_received;
                         hits_recv += ad.hits_received;
+                        if ad.first_damage_time > 0 && (premier_coup == 0 || ad.first_damage_time < premier_coup) {
+                            premier_coup = ad.first_damage_time;
+                        }
+                        for (&(code, est_dot), sd) in &ad.skills {
+                            if !est_dot && sd.max_damage > gros_coup {
+                                gros_coup = sd.max_damage;
+                                gros_coup_code = code;
+                            }
+                        }
                     }
                 }
+                let morts = self.data_storage.morts_dans(id, fenetre_morts.0, fenetre_morts.1);
                 DetailsActorSummary {
                     actor_id: id,
                     nickname: nick.clone(),
+                    first_hit_ms: premier_coup,
+                    max_hit: gros_coup,
+                    max_hit_skill: if gros_coup_code != 0 { self.skill_lookup.lookup_skill_name(gros_coup_code) } else { String::new() },
+                    deaths: morts,
                     job: job.clone(),
                     job_id,
                     party_heal,
@@ -1055,6 +1081,7 @@ impl DpsCalculator {
                     level: 0,
                     gear_score: 0,
                     combat_power: 0,
+                    ..Default::default()
                 }
             })
             .collect();
@@ -1622,5 +1649,61 @@ mod tests_mode_boss {
         let (cibles, _, id) = calc.decide_target(&combat, &HashMap::new(), &HashMap::new());
         assert_eq!(id, 7002, "sans code connu, on montre la cible la plus frappée");
         assert_eq!(cibles.len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod tests_temps_forts {
+    use std::sync::Arc;
+
+    use super::DpsCalculator;
+    use crate::combat::data_storage::DataStorage;
+    use crate::combat::ping_tracker::PingTracker;
+    use crate::entity::damage_packet::ParsedDamagePacket;
+    use crate::i18n::lookup::{NpcLookup, SkillLookup};
+
+    fn coup(acteur: i32, cible: i32, instant: i64, degats: i32, dot: bool) -> ParsedDamagePacket {
+        let mut p = ParsedDamagePacket::new();
+        p.set_actor_id(acteur);
+        p.set_target_id(cible);
+        p.set_skill_code(11010000);
+        p.set_damage(degats);
+        p.set_dot(dot);
+        p.set_timestamp(instant);
+        p
+    }
+
+    /// L'onglet « Temps forts » de la fenêtre Détails (Abyss DPS Meter, 16/10/2026) :
+    /// premier coup, plus gros coup et morts de chaque joueur.
+    #[test]
+    fn le_resume_des_acteurs_porte_premier_coup_plus_gros_coup_et_morts() {
+        let stockage = Arc::new(DataStorage::new());
+        stockage.append_damage(coup(1, 900, 1_000, 100, false));
+        stockage.append_damage(coup(1, 900, 1_200, 9_999, true)); // dégâts sur la durée : pas un « gros coup »
+        stockage.append_damage(coup(2, 900, 1_500, 300, false));
+        stockage.append_damage(coup(1, 900, 2_000, 500, false));
+        // L'acteur 2 tombe à 1,8 s, pendant le combat.
+        crate::clock::set_override(Some(1_799));
+        stockage.noter_pv_dentite(2, 19_000);
+        crate::clock::set_override(Some(1_800));
+        stockage.noter_pv_dentite(2, 0);
+        crate::clock::set_override(None);
+
+        let calc = DpsCalculator::new(
+            stockage,
+            Arc::new(SkillLookup::new()),
+            Arc::new(NpcLookup::new()),
+            Arc::new(PingTracker::new()),
+        );
+        let contexte = calc.get_details_context();
+        let un = contexte.actors.iter().find(|a| a.actor_id == 1).expect("acteur 1");
+        let deux = contexte.actors.iter().find(|a| a.actor_id == 2).expect("acteur 2");
+
+        assert_eq!(un.first_hit_ms, 1_000);
+        assert_eq!(deux.first_hit_ms, 1_500);
+        assert_eq!(un.max_hit, 500, "le DoT de 9 999 ne compte pas");
+        assert_eq!(deux.max_hit, 300);
+        assert_eq!(un.deaths, 0);
+        assert_eq!(deux.deaths, 1);
     }
 }

@@ -166,6 +166,8 @@ pub struct ActorCombatData {
     pub damage_received: i64,
     pub hits_received: i32,
     pub last_damage_time: i64,
+    /// Premier coup direct de cet acteur sur cette cible (0 : aucun encore).
+    pub first_damage_time: i64,
     pub job: Option<JobClass>,
     /// Skills keyed by (raw_skill_code, is_dot)
     pub skills: HashMap<(i32, bool), SkillCombatData>,
@@ -180,6 +182,7 @@ impl ActorCombatData {
             damage_received: 0,
             hits_received: 0,
             last_damage_time: 0,
+            first_damage_time: 0,
             job: None,
             skills: HashMap::new(),
         }
@@ -1272,6 +1275,7 @@ impl DataStorage {
                                 damage_received: ad.damage_received,
                                 hits_received: ad.hits_received,
                                 last_damage_time: ad.last_damage_time,
+                                first_damage_time: ad.first_damage_time,
                                 job: ad.job,
                                 skills,
                             },
@@ -1442,6 +1446,12 @@ fn apply_damage(inner: &mut Inner, pdp: &ParsedDamagePacket) {
     actor_data.total_damage += total_dmg as i64;
     if timestamp > actor_data.last_damage_time {
         actor_data.last_damage_time = timestamp;
+    }
+    // Le premier coup direct : un dégât sur la durée n'ouvre pas un combat.
+    if !pdp.is_dot()
+        && (actor_data.first_damage_time == 0 || timestamp < actor_data.first_damage_time)
+    {
+        actor_data.first_damage_time = timestamp;
     }
     if actor_data.job.is_none() {
         actor_data.job = JobClass::convert_from_skill(skill_code);

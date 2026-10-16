@@ -1876,6 +1876,7 @@ const createDetailsUI = ({
       if (!Number.isFinite(numericId) || numericId <= 0) return;
       detailsActors.set(numericId, actor);
     });
+    if (detailsMode === "highlights") renderHighlights();
     return nextContext;
   };
 
@@ -2560,12 +2561,138 @@ const createDetailsUI = ({
 
   const isPinned = () => pinnedRowId !== null;
 
+  // ── Temps forts (ajout XIII NRV, d'après Abyss DPS Meter, 16/10/2026) ──
+  // Quatre cartes de classement et un bloc Combat, calculés sur les acteurs et
+  // les cibles déjà chargés. Les soins reçus manquent encore : le paquet de soin
+  // ne nomme pas toujours la cible, la carte n'est donc pas affichée.
+  const highlightsEl = detailsPanel?.querySelector?.(".detailsHighlights");
+  const hlText = (key, fallback) => labelText(`details.highlights.${key}`, fallback);
+  const hlTime = (ms) => {
+    const total = Math.max(0, Math.floor(Number(ms) / 1000) || 0);
+    return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+  };
+  const hlEl = (tag, className, text) => {
+    const el = document.createElement(tag);
+    if (className) el.className = className;
+    if (text !== undefined) el.textContent = text;
+    return el;
+  };
+  const hlCard = (title, rows, options = {}) => {
+    const card = hlEl("div", "hlCard");
+    card.appendChild(hlEl("div", "hlCardTitle", title));
+    if (!rows.length) {
+      card.appendChild(hlEl("div", "hlEmpty", "-"));
+      return card;
+    }
+    const top = rows[0];
+    const head = hlEl("div", "hlTop");
+    head.appendChild(hlEl("span", "hlTopName", top.name));
+    head.appendChild(hlEl("span", "hlTopValue", top.valueText));
+    card.appendChild(head);
+    if (options.subtitle) card.appendChild(hlEl("div", "hlSub", options.subtitle(top)));
+    const list = hlEl("div", "hlList");
+    rows.slice(0, 5).forEach((row, i) => {
+      const line = hlEl("div", "hlRow");
+      line.appendChild(hlEl("span", "hlRank", String(i + 1)));
+      if (row.job) {
+        const icon = document.createElement("img");
+        icon.className = "hlIcon";
+        icon.alt = "";
+        icon.src = `./assets/${row.job}.png`;
+        icon.onerror = () => { icon.style.visibility = "hidden"; };
+        line.appendChild(icon);
+      }
+      line.appendChild(hlEl("span", "hlName", row.name));
+      line.appendChild(hlEl("span", "hlValue", row.valueText));
+      list.appendChild(line);
+    });
+    card.appendChild(list);
+    return card;
+  };
+  const renderHighlights = () => {
+    if (!highlightsEl) return;
+    highlightsEl.textContent = "";
+    const actors = [...detailsActors.values()];
+    if (!actors.length) {
+      highlightsEl.appendChild(hlEl("div", "hlEmpty", "-"));
+      return;
+    }
+    const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+    const damageOf = (actor) =>
+      detailsTargets.reduce((sum, t) => sum + getActorDamage(t.actorDamage, actor.actorId), 0);
+    const base = (actor, value, valueText) => ({
+      name: actor.nickname || `#${actor.actorId}`,
+      job: actor.job,
+      value,
+      valueText,
+    });
+    const ranked = (list) => list.filter((r) => r.value > 0).sort((a, b) => b.value - a.value);
+    const part = (row, total) => (total > 0 ? Math.round((row.value / total) * 100) : 0);
+
+    const heals = ranked(actors.map((a) => base(a, num(a.partyHeal), formatCompactNumber(num(a.partyHeal)))));
+    const healTotal = heals.reduce((s, r) => s + r.value, 0);
+    const taken = ranked(actors.map((a) => base(a, num(a.damageReceived), formatCompactNumber(num(a.damageReceived)))));
+    const takenTotal = taken.reduce((s, r) => s + r.value, 0);
+    const bigHits = ranked(actors.map((a) => ({
+      ...base(a, num(a.maxHit), formatCompactNumber(num(a.maxHit))),
+      skill: a.maxHitSkill || "",
+    })));
+    const firstHits = actors
+      .filter((a) => num(a.firstHitMs) > 0)
+      .map((a) => ({ ...base(a, num(a.firstHitMs), ""), t: num(a.firstHitMs) }))
+      .sort((a, b) => a.t - b.t);
+    const t0 = firstHits.length ? firstHits[0].t : 0;
+    firstHits.forEach((r) => { r.valueText = r.t === t0 ? "0.0s" : `+${((r.t - t0) / 1000).toFixed(1)}s`; });
+
+    const grid = hlEl("div", "hlGrid");
+    grid.appendChild(hlCard(hlText("mostHealing", "Most healing"), heals, {
+      subtitle: (top) => `${part(top, healTotal)}% ${hlText("ofGroupHealing", "of group healing")}`,
+    }));
+    grid.appendChild(hlCard(hlText("mostDamageTaken", "Most damage taken"), taken, {
+      subtitle: (top) => `${part(top, takenTotal)}% ${hlText("ofGroupTaken", "of group damage taken")}`,
+    }));
+    grid.appendChild(hlCard(hlText("biggestHit", "Biggest hit"), bigHits, {
+      subtitle: (top) => top.skill,
+    }));
+    grid.appendChild(hlCard(hlText("firstHit", "First hit"), firstHits, {
+      subtitle: () => hlText("openedFight", "Opened the fight"),
+    }));
+
+    // Bloc Combat : durée, dégâts et DPS du groupe, soins, dégâts subis, morts.
+    const duration = detailsTargets.reduce((m, t) => Math.max(m, num(t.battleTime)), 0);
+    const groupDamage = actors.reduce((s, a) => s + damageOf(a), 0);
+    const dps = duration > 0 ? groupDamage / (duration / 1000) : 0;
+    const deaths = actors.reduce((s, a) => s + num(a.deaths), 0);
+    const block = hlEl("div", "hlCard hlCombat");
+    block.appendChild(hlEl("div", "hlCardTitle", hlText("combat", "Combat")));
+    [
+      [hlText("duration", "Duration"), hlTime(duration)],
+      [hlText("groupDamage", "Group damage"), formatCompactNumber(groupDamage)],
+      [hlText("groupDps", "Group DPS"), formatCompactNumber(dps)],
+      [hlText("healingDone", "Healing done"), formatCompactNumber(healTotal)],
+      [hlText("damageTaken", "Damage taken"), formatCompactNumber(takenTotal)],
+      [hlText("deaths", "Deaths"), String(deaths)],
+    ].forEach(([label, value]) => {
+      const line = hlEl("div", "hlStat");
+      line.appendChild(hlEl("span", "hlStatLabel", label));
+      line.appendChild(hlEl("span", "hlStatValue", value));
+      block.appendChild(line);
+    });
+    grid.appendChild(block);
+    highlightsEl.appendChild(grid);
+  };
+
   const syncModeButtons = () => {
     detailsPanel?.querySelectorAll?.(".detailsModeBtn")?.forEach?.((btn) => {
       btn.classList.toggle("isActive", btn?.dataset?.mode === detailsMode);
     });
+    detailsPanel?.classList?.toggle?.("isHighlights", detailsMode === "highlights");
   };
   const rerenderForMode = () => {
+    if (detailsMode === "highlights") {
+      renderHighlights();
+      return;
+    }
     if (!lastDetails) return;
     const ctx = buildPartyBarStats();
     renderPartyBars(ctx?.stats || lastDetails?.perActorStats, ctx?.battleTimeMs || lastDetails?.battleTimeMs);
@@ -2574,7 +2701,7 @@ const createDetailsUI = ({
     renderTimeline(lastDetails);
   };
   const setDetailsMode = (mode) => {
-    const next = mode === "heal" ? "heal" : "dmg";
+    const next = mode === "heal" || mode === "highlights" ? mode : "dmg";
     if (next === detailsMode) return;
     detailsMode = next;
     syncModeButtons();

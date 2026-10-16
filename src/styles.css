@@ -6997,3 +6997,99 @@ html.carteWindow .cartePanel {
 .carteNote:empty { display: none; }
 .carteMonde.sansNoms .carteLieuNom { display: none; }
 .carteMessage { display: none; padding: 10px 14px; background: rgba(255,200,80,0.12); border-top: 1px solid #5a4a1c; }
+
+/* ── Temps forts (fenêtre Détails, mode « TOP ») ── */
+.detailsPanel .detailsHighlights {
+  display: none;
+}
+.detailsPanel.isHighlights .detailsHighlights {
+  display: block;
+  padding: 10px;
+}
+.detailsPanel.isHighlights .detailsBody > :not(.detailsHighlights) {
+  display: none;
+}
+.detailsPanel .hlGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+.detailsPanel .hlCard {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  padding: 10px;
+  min-width: 0;
+}
+.detailsPanel .hlCardTitle {
+  font-size: 0.78em;
+  font-weight: 700;
+  opacity: 0.75;
+  margin-bottom: 6px;
+}
+.detailsPanel .hlTop {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  font-weight: 700;
+}
+.detailsPanel .hlTopValue {
+  color: var(--isUser-fill);
+  font-size: 1.1em;
+}
+.detailsPanel .hlSub {
+  font-size: 0.78em;
+  opacity: 0.65;
+  margin-bottom: 6px;
+}
+.detailsPanel .hlList {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 6px;
+}
+.detailsPanel .hlRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85em;
+}
+.detailsPanel .hlRank {
+  width: 1em;
+  opacity: 0.5;
+  text-align: center;
+}
+.detailsPanel .hlIcon {
+  width: 1.2em;
+  height: 1.2em;
+}
+.detailsPanel .hlName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.detailsPanel .hlValue {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
+}
+.detailsPanel .hlStat {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 2px 0;
+  font-size: 0.85em;
+}
+.detailsPanel .hlStatLabel {
+  opacity: 0.7;
+}
+.detailsPanel .hlStatValue {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.detailsPanel .hlEmpty {
+  opacity: 0.5;
+  padding: 6px 0;
+}

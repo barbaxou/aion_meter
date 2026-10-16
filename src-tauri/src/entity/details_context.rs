@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DetailsActorSummary {
     pub actor_id: i32,
@@ -46,6 +46,19 @@ pub struct DetailsActorSummary {
     pub gear_score: i32,
     #[serde(default)]
     pub combat_power: i64,
+    /// Heure (ms, horloge de capture) du premier coup direct de cet acteur, 0 si
+    /// inconnue. Sert à l'onglet « Temps forts » : le délai se lit contre le
+    /// plus ancien des acteurs.
+    #[serde(default)]
+    pub first_hit_ms: i64,
+    /// Son plus gros coup direct (hors dégâts sur la durée) et la compétence.
+    #[serde(default)]
+    pub max_hit: i32,
+    #[serde(default)]
+    pub max_hit_skill: String,
+    /// Morts tombées pendant le combat affiché (voir `morts_dans`).
+    #[serde(default)]
+    pub deaths: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
