@@ -315,6 +315,8 @@ struct Inner {
     /// sans compter deux fois la même — un paquet de mort répété retrouve
     /// l'entité déjà marquée et ne compte pas.
     morts_par_entite: HashMap<i32, u32>,
+    /// Les heures (ms, horloge de capture) de ces morts, pour les compter par combat.
+    heures_des_morts: HashMap<i32, Vec<i64>>,
     /// La dernière lecture de PV de chaque entité, pour repérer la chute à zéro.
     pv_precedents: HashMap<i32, i32>,
     /// Les entités dont on a vu les PV tomber à zéro une fois, et qui attendent
@@ -395,6 +397,7 @@ impl DataStorage {
                 hostile_target_ids: HashSet::new(),
                 dead_entity_ids: HashSet::new(),
                 morts_par_entite: HashMap::new(),
+                heures_des_morts: HashMap::new(),
                 pv_precedents: HashMap::new(),
                 zero_en_attente: HashSet::new(),
                 boss_entity_ids: HashSet::new(),
@@ -556,7 +559,9 @@ impl DataStorage {
         if self.flush_en_attente.swap(false, Ordering::Relaxed) {
             self.flush_combat_only();
             if self.morts_a_vider.swap(false, Ordering::Relaxed) {
-                self.inner.write().morts_par_entite.clear();
+                let mut inner = self.inner.write();
+                inner.morts_par_entite.clear();
+                inner.heures_des_morts.clear();
             }
             self.combat_reset_requested.store(true, Ordering::Relaxed);
             tracing::info!("Remise à zéro armée appliquée : nouvelle cible engagée");
@@ -770,6 +775,8 @@ impl DataStorage {
         if pv == 0 && avant.is_some_and(|p| p > 0) {
             let n = inner.morts_par_entite.entry(entity_id).or_insert(0);
             *n += 1;
+            let n = *n;
+            inner.heures_des_morts.entry(entity_id).or_default().push(now_ms());
             // Trace pour savoir, après un donjon, si le meter a vu les chutes
             // à zéro (16/10/2026 : des morts affichées par Abyss ne l'étaient
             // pas chez nous, et le journal ne disait rien).
@@ -782,6 +789,15 @@ impl DataStorage {
     }
 
     /// Combien de fois cette entité est tombée depuis la dernière remise à zéro.
+    /// Les morts tombées pendant `[debut, fin]` (ms, horloge de capture) : ce que
+    /// montre un combat. Abyss DPS Meter compte ainsi, par combat ; le cumul sur
+    /// tout le run, lui, mélangeait les morts des combats précédents.
+    pub fn morts_dans(&self, entity_id: i32, debut: i64, fin: i64) -> u32 {
+        self.inner.read().heures_des_morts.get(&entity_id)
+            .map(|v| v.iter().filter(|&&t| t >= debut && t <= fin).count() as u32)
+            .unwrap_or(0)
+    }
+
     pub fn morts(&self, entity_id: i32) -> u32 {
         self.inner.read().morts_par_entite.get(&entity_id).copied().unwrap_or(0)
     }
@@ -922,6 +938,7 @@ impl DataStorage {
             let mut inner = self.inner.write();
             if inner.current_dungeon_id > 0 && inner.current_dungeon_id != dungeon_id {
                 inner.morts_par_entite.clear();
+                inner.heures_des_morts.clear();
             }
             inner.current_dungeon_id = dungeon_id;
         }
@@ -1290,6 +1307,7 @@ impl DataStorage {
         inner.hostile_target_ids.clear();
         inner.dead_entity_ids.clear();
         inner.morts_par_entite.clear();
+        inner.heures_des_morts.clear();
         inner.pv_precedents.clear();
         inner.zero_en_attente.clear();
         inner.has_boss_in_segment = false;
@@ -1835,6 +1853,25 @@ mod tests {
         s.set_mob_current_hp(36815, 15_504_000); // lecture à plein ensuite
         let (total, _) = totals(&s, 36815);
         assert_eq!(total, 15_504_000, "le combat du boss tué reste lisible");
+    }
+
+    /// 16/10/2026, run Atiel : Abyss compte les morts **du combat** (2, 2, 2, 1, 1),
+    /// nous les cumulions sur le run (4, 5, 2, 2) alors que nos heures de mort
+    /// concordaient avec les leurs à 50 ms près.
+    #[test]
+    fn les_morts_se_comptent_sur_la_duree_du_combat() {
+        let s = DataStorage::new();
+        for (t, pv) in [(10_000, 0), (100_000, 0), (200_000, 0)] {
+            crate::clock::set_override(Some(t - 1));
+            s.noter_pv_dentite(4242, 19_000);
+            crate::clock::set_override(Some(t));
+            s.noter_pv_dentite(4242, pv);
+        }
+        crate::clock::set_override(None);
+        assert_eq!(s.morts(4242), 3, "trois morts au total sur le run");
+        assert_eq!(s.morts_dans(4242, 90_000, 110_000), 1, "une seule dans ce combat");
+        assert_eq!(s.morts_dans(4242, 0, 120_000), 2);
+        assert_eq!(s.morts_dans(4242, 300_000, 400_000), 0);
     }
 
     #[test]

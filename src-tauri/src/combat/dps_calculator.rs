@@ -406,6 +406,15 @@ impl DpsCalculator {
             }
         }
 
+        let fenetre_morts = {
+            let debut = target_ids.iter().filter_map(|t| combat_data.get(t)).map(|d| d.first_damage_time).min();
+            let fin = target_ids.iter().filter_map(|t| combat_data.get(t)).map(|d| d.last_damage_time).max();
+            match (debut, fin) {
+                (Some(d), Some(f)) => (d, f + 15_000),
+                _ => (0, 0),
+            }
+        };
+
         // Filter and compute DPS
         let local_ids = self.resolve_local_ids(&summon_data);
         let party_members = self.data_storage.get_party_members();
@@ -429,7 +438,10 @@ impl DpsCalculator {
                 .unwrap_or(0);
             data.heal = soins.get(&uid).copied().unwrap_or(0);
             // Ajout XIII NRV : le nombre de morts, demandé pour l'overlay.
-            data.deaths = self.data_storage.morts(uid);
+            // Les morts **du combat affiché**, comme Abyss DPS Meter : de la
+            // première à la dernière frappe sur les cibles, plus 15 s de grâce
+            // pour qui tombe juste après le dernier coup.
+            data.deaths = self.data_storage.morts_dans(uid, fenetre_morts.0, fenetre_morts.1);
             if data.job.is_empty() {
                 if local_ids.as_ref().is_some_and(|ids| ids.contains(&uid)) {
                     data.job = "Unknown".to_string();
