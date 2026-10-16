@@ -687,7 +687,8 @@ impl DataStorage {
             inner.target_combat.clear();
             inner.held_dot_ticks.clear();
             inner.dead_entity_ids.clear();
-            inner.morts_par_entite.clear();
+            // Les morts ne sont pas vidées : un joueur tombé au trash l'est
+            // toujours au boss (`les_morts_survivent_au_premier_coup_sur_un_boss`).
         inner.pv_precedents.clear();
         inner.zero_en_attente.clear();
             inner.has_boss_in_segment = true;
@@ -873,6 +874,7 @@ impl DataStorage {
             );
             inner.party_members.clear();
             inner.current_dungeon_id = 0;
+            inner.morts_par_entite.clear();
             drop(inner);
             self.flush_en_attente.store(true, Ordering::Relaxed);
             return;
@@ -902,7 +904,11 @@ impl DataStorage {
 
     pub fn set_current_dungeon(&self, dungeon_id: i32) {
         if dungeon_id > 0 {
-            self.inner.write().current_dungeon_id = dungeon_id;
+            let mut inner = self.inner.write();
+            if inner.current_dungeon_id > 0 && inner.current_dungeon_id != dungeon_id {
+                inner.morts_par_entite.clear();
+            }
+            inner.current_dungeon_id = dungeon_id;
         }
     }
 
@@ -1286,7 +1292,8 @@ impl DataStorage {
         inner.held_dot_ticks.clear();
         inner.hostile_target_ids.clear();
         inner.dead_entity_ids.clear();
-        inner.morts_par_entite.clear();
+        // Les morts restent : un changement de zone dans l'instance ne les
+        // efface pas. Elles s'arrêtent avec le groupe ou en changeant de donjon.
         inner.pv_precedents.clear();
         inner.zero_en_attente.clear();
         inner.has_boss_in_segment = false;
@@ -1735,6 +1742,46 @@ mod tests {
     /// Les PV des joueurs passent, eux, dans le flux `8D` : 401 lectures pour
     /// un membre du groupe, maximum 22 363 PV, quatre chutes à zéro. D'où cette
     /// règle, qui lit la résurrection toute seule : les PV remontent.
+    /// Mesuré le 16/10/2026 : le compteur de morts retombait à zéro en plein
+    /// donjon (Abyss DPS Meter le garde affiché toute la durée). Les journaux
+    /// montrent deux changements de zone dans la même instance (18:42:09 et
+    /// 18:42:37) et un auto-reset à chaque premier coup sur un boss : tous
+    /// vidaient les morts. Un mort le reste jusqu'à la fin du donjon.
+    fn un_joueur_est_tombe(s: &DataStorage) {
+        s.noter_pv_dentite(4242, 19_780);
+        s.noter_pv_dentite(4242, 0);
+        assert_eq!(s.morts(4242), 1);
+    }
+
+    #[test]
+    fn les_morts_survivent_au_premier_coup_sur_un_boss() {
+        let s = DataStorage::new();
+        s.register_boss(900);
+        s.append_damage(hit(1454, 700, 1_000, 100, false)); // du trash d'abord
+        un_joueur_est_tombe(&s);
+        s.append_damage(hit(1454, 900, 5_000, 100, false)); // puis le boss
+        assert_eq!(s.morts(4242), 1, "l'auto-reset du boss ne vide pas les morts");
+    }
+
+    #[test]
+    fn les_morts_survivent_a_un_changement_de_zone_dans_linstance() {
+        let s = DataStorage::new();
+        un_joueur_est_tombe(&s);
+        s.flush_combat_only();
+        assert_eq!(s.morts(4242), 1);
+    }
+
+    #[test]
+    fn les_morts_repartent_a_zero_dans_un_autre_donjon() {
+        let s = DataStorage::new();
+        s.set_current_dungeon(600092);
+        un_joueur_est_tombe(&s);
+        s.set_current_dungeon(600092);
+        assert_eq!(s.morts(4242), 1, "le même donjon garde les morts");
+        s.set_current_dungeon(600100);
+        assert_eq!(s.morts(4242), 0, "un autre donjon repart de zéro");
+    }
+
     #[test]
     fn une_mort_cest_des_pv_qui_tombent_a_zero() {
         let s = DataStorage::new();
