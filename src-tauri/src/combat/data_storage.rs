@@ -233,6 +233,8 @@ pub struct DataStorage {
     /// **prochain coup porté** — c'est-à-dire quand on engage une nouvelle
     /// cible. Le bouton de remise à zéro, lui, agit toujours immédiatement.
     flush_en_attente: AtomicBool,
+    /// La fin du groupe vide aussi les morts, mais au coup suivant, comme le reste.
+    morts_a_vider: AtomicBool,
 }
 
 struct Inner {
@@ -411,6 +413,7 @@ impl DataStorage {
             last_zone_reset_ms: AtomicI64::new(0),
             combat_reset_requested: AtomicBool::new(false),
             flush_en_attente: AtomicBool::new(false),
+            morts_a_vider: AtomicBool::new(false),
         }
     }
 
@@ -552,6 +555,9 @@ impl DataStorage {
         // Jusque-là l'overlay garde le combat précédent, lisible.
         if self.flush_en_attente.swap(false, Ordering::Relaxed) {
             self.flush_combat_only();
+            if self.morts_a_vider.swap(false, Ordering::Relaxed) {
+                self.inner.write().morts_par_entite.clear();
+            }
             self.combat_reset_requested.store(true, Ordering::Relaxed);
             tracing::info!("Remise à zéro armée appliquée : nouvelle cible engagée");
         }
@@ -762,7 +768,16 @@ impl DataStorage {
         let mut inner = self.inner.write();
         let avant = inner.pv_precedents.insert(entity_id, pv);
         if pv == 0 && avant.is_some_and(|p| p > 0) {
-            *inner.morts_par_entite.entry(entity_id).or_insert(0) += 1;
+            let n = inner.morts_par_entite.entry(entity_id).or_insert(0);
+            *n += 1;
+            // Trace pour savoir, après un donjon, si le meter a vu les chutes
+            // à zéro (16/10/2026 : des morts affichées par Abyss ne l'étaient
+            // pas chez nous, et le journal ne disait rien).
+            tracing::info!("Mort comptée : entité {entity_id}, {n}e fois (PV {} → 0)", avant.unwrap_or(0));
+        } else if pv == 0 && avant.is_none() {
+            // Un zéro sans lecture précédente n'est pas compté : on le garde
+            // en trace pour voir s'il manquait une mort.
+            tracing::debug!("PV à zéro sans lecture précédente : entité {entity_id}, non comptée");
         }
     }
 
@@ -874,8 +889,8 @@ impl DataStorage {
             );
             inner.party_members.clear();
             inner.current_dungeon_id = 0;
-            inner.morts_par_entite.clear();
             drop(inner);
+            self.morts_a_vider.store(true, Ordering::Relaxed);
             self.flush_en_attente.store(true, Ordering::Relaxed);
             return;
         }
@@ -1129,7 +1144,9 @@ impl DataStorage {
         // dépendance invisible entre deux chemins. Celle-ci est à nous.
         let precedent = inner.mob_current_hp.get(&id).copied();
         let recommence = max_connu > 0
-            && precedent.is_some_and(|p| (p as i64) * 100 < (max_connu as i64) * 90)
+            // `p > 0` : un boss tué (PV à zéro) n'est pas une reprise ; sans cela
+            // sa lecture à plein effaçait le combat qu'on voulait encore lire.
+            && precedent.is_some_and(|p| p > 0 && (p as i64) * 100 < (max_connu as i64) * 90)
             && (hp as i64) * 100 >= (max_connu as i64) * 98;
         if recommence {
             tracing::info!(
@@ -1137,8 +1154,9 @@ impl DataStorage {
             );
             inner.target_combat.remove(&id);
             inner.mob_hp_ancre.remove(&id);
-            // Les morts comptées appartenaient à la tentative précédente.
-            inner.morts_par_entite.clear();
+            // Les morts ne sont plus vidées ici : la règle s'applique aussi aux
+            // joueurs (un soin de moins de 90 % à plein suffit) et effaçait toutes
+            // les morts du groupe. Une reprise après un wipe garde ses morts.
         }
 
         inner.mob_current_hp.insert(id, hp);
@@ -1769,6 +1787,54 @@ mod tests {
         un_joueur_est_tombe(&s);
         s.flush_combat_only();
         assert_eq!(s.morts(4242), 1);
+    }
+
+    /// 16/10/2026 : à la fin du groupe les morts disparaissaient aussitôt, alors
+    /// que le reste du combat reste lisible jusqu'au coup suivant. On veut
+    /// pouvoir lire qui est mort une fois le donjon fini.
+    #[test]
+    fn les_morts_restent_lisibles_apres_la_fin_du_groupe() {
+        let s = DataStorage::new();
+        s.set_local_character_name(Some("Barbaxou".into()));
+        let membres = |noms: &[&str]| -> Vec<(String, PartyMember)> {
+            noms.iter()
+                .enumerate()
+                .map(|(i, n)| (n.to_string(), PartyMember { slot: i as u8, ..Default::default() }))
+                .collect()
+        };
+        s.set_party_roster(membres(&["A", "B", "Barbaxou"]), true);
+        un_joueur_est_tombe(&s);
+        s.set_party_roster(membres(&["Barbaxou"]), true); // le groupe est fini
+        assert_eq!(s.morts(4242), 1, "lisible jusqu'au coup suivant");
+        s.append_damage(hit(1085, 901, 2_000, 7_000, false)); // nouveau combat
+        assert_eq!(s.morts(4242), 0, "un nouveau combat repart de zéro");
+    }
+
+    /// 16/10/2026, journal : `Nouvelle tentative : les PV de l'entité 7569
+    /// repassent à 20094` — 7569 est le joueur local. Tout joueur soigné de
+    /// moins de 90 % à plein déclenchait la règle « on recommence le boss » et
+    /// vidait **toutes** les morts : c'est ce qui les faisait sauter.
+    #[test]
+    fn un_joueur_soigne_ne_vide_pas_les_morts() {
+        let s = DataStorage::new();
+        un_joueur_est_tombe(&s);
+        s.set_mob_current_hp(7569, 20_122);
+        s.set_mob_current_hp(7569, 9_000); // touché
+        s.set_mob_current_hp(7569, 20_094); // soigné à plein
+        assert_eq!(s.morts(4242), 1, "un soin n'efface pas les morts");
+    }
+
+    /// Un boss tué n'est pas une nouvelle tentative : ses PV tombent à zéro,
+    /// puis une lecture à plein ne doit pas effacer le combat qu'on veut lire.
+    #[test]
+    fn un_boss_tue_reste_a_lecran_quand_ses_pv_reviennent() {
+        let s = DataStorage::new();
+        s.set_mob_current_hp(36815, 15_504_000);
+        s.append_damage(hit(1085, 36815, 1_000, 15_504_000, false));
+        s.set_mob_current_hp(36815, 0); // il meurt
+        s.set_mob_current_hp(36815, 15_504_000); // lecture à plein ensuite
+        let (total, _) = totals(&s, 36815);
+        assert_eq!(total, 15_504_000, "le combat du boss tué reste lisible");
     }
 
     #[test]
