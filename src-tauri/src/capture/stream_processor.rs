@@ -2576,6 +2576,10 @@ fn parse_party_roster_at(
 
     let mut members = Vec::new();
     let mut complete = false;
+    // Le monde répété dans l'enregistrement, tel qu'un membre précédent l'a
+    // montré : certains membres ont dans leur identifiant un autre monde (un
+    // personnage d'un autre serveur) que celui que le reste de leur ligne répète.
+    let mut monde_repete: Option<u16> = None;
     for index in 0..count_info.value {
         if o + 20 > data.len() {
             break;
@@ -2622,9 +2626,16 @@ fn parse_party_roster_at(
         // on the member's world id instead: it is repeated here as a u16 and we
         // already know its value from the top half of `dbid`. Combat power then
         // sits a fixed distance past it.
-        let Some(anchor) = find_u16(data, o, o + 10, server_id) else {
+        let anchor = find_u16(data, o, o + 10, server_id)
+            .map(|a| (a, server_id))
+            .or_else(|| {
+                let m = monde_repete?;
+                find_u16(data, o, o + 10, m).map(|a| (a, m))
+            });
+        let Some((anchor, monde)) = anchor else {
             break;
         };
+        monde_repete = Some(monde);
         o = anchor + 2 + 2 + 1; // world id, a second u16, one tag byte
         let combat_power = u64::from_le_bytes(data.get(o..o + 8)?.try_into().ok()?);
         o += 8;
@@ -2854,6 +2865,32 @@ fn unicode_script(ch: char) -> UnicodeScript {
 
 #[cfg(test)]
 mod tests {
+    /// Paquet `02 97` d'un donjon, relevé le 16/10/2026 puis **anonymisé** : pseudos,
+    /// identifiants de compte et Combat Power sont inventés, la structure est celle
+    /// du jeu. Cinq membres, mais le monde du troisième dans son identifiant (0x0904)
+    /// n'est pas celui que le reste de l'enregistrement répète (0x08ff). L'ancrage
+    /// échouait, la lecture s'arrêtait là et les deux derniers membres étaient perdus :
+    /// seuls deux ou trois CP arrivaient à l'overlay.
+    #[test]
+    fn la_liste_du_groupe_garde_les_cinq_membres_meme_si_un_monde_differe() {
+        let hex = "ba020297da4a13000c4c656176696e67206e6f772e050e4f09000403010203000000ff08fe0103051e01010203000000ff0807416c6472616e65200000002d000000ec090000ff08e31004a08601000000000000ef0000000000000001011e02040506000000ff08064265787561720f0000002d000000e7090000ff08e31004b0ad01000000000000ba0000000000000001011e030a0b0c00000004090b49726f6e57616c6c58595a070000002d000000c5090000ff08e31004c0d401000000000000250000000000000001011e0407080d000000ff08054b7972696e240000002d0000004b0a000007ff08e31004d0fb01000000000000170100000000000001011e050e0f10000000ff08054d6176726f140000002d0000009a0a0000ff08e31004e022020000000000004600000000000000010100";
+        let data: Vec<u8> = (0..hex.len()).step_by(2)
+            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap()).collect();
+        let (membres, complet, _) = parse_party_roster_at(&data, 4).expect("liste lisible");
+        let cp: Vec<(String, i64)> = membres.iter().map(|(n, m)| (n.clone(), m.combat_power)).collect();
+        assert_eq!(
+            cp,
+            vec![
+                ("Aldrane".to_string(), 100_000),
+                ("Bexuar".to_string(), 110_000),
+                ("IronWallXYZ".to_string(), 120_000),
+                ("Kyrin".to_string(), 130_000),
+                ("Mavro".to_string(), 140_000),
+            ]
+        );
+        assert!(complet, "les cinq membres déclarés sont lus");
+    }
+
     use super::*;
 
     #[test]
