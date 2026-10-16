@@ -11,6 +11,14 @@ use crate::entity::summon_resolver;
 /// Maximum idle gap before a fight is considered ended and a new one begins.
 const IDLE_RESET_MS: i64 = 30_000;
 
+/// Même règle pour un boss : il ne finit pas parce qu'on ne le frappe plus
+/// quelques dizaines de secondes (changement de phase). Mesuré le 16/10/2026 :
+/// Duanka nécromancienne, 39 s sans coup, puis reprise sur la même cible ;
+/// le journal montrait aussi des trous de 57 s sur d'autres runs. Reprendre un
+/// boss après une mort est déjà géré par le retour des PV à plein
+/// (`recommencer_un_boss_apres_une_mort_repart_de_zero`).
+const IDLE_RESET_BOSS_MS: i64 = 90_000;
+
 /// A zone-change auto-reset is ignored if any damage was recorded within this
 /// window, so an in-combat self-teleport (boss knockback/pull) can't wipe an
 /// active fight. Real zone transitions always follow a travel/load lull.
@@ -1361,9 +1369,14 @@ fn apply_damage(inner: &mut Inner, pdp: &ParsedDamagePacket) {
         TargetCombatData::new(target_id, timestamp)
     });
 
-    // Idle reset check (30s gap)
+    // Idle reset check (30 s gap, 90 s for a boss)
+    let idle_limit = if inner.boss_entity_ids.contains(&target_id) {
+        IDLE_RESET_BOSS_MS
+    } else {
+        IDLE_RESET_MS
+    };
     if target_data.last_damage_time > 0
-        && timestamp - target_data.last_damage_time > IDLE_RESET_MS
+        && timestamp - target_data.last_damage_time > idle_limit
     {
         tracing::info!("Idle reset: target {} — gap {}ms", target_id,
             timestamp - target_data.last_damage_time);
@@ -1786,6 +1799,33 @@ mod tests {
         s.append_damage(hit(1454, 500, 4_000, 50, true));
         s.append_damage(hit(1454, 500, 5_000, 50, true));
         assert_eq!(totals(&s, 500), (250, 2_000), "time ends at the last direct hit");
+    }
+
+    /// Duanka nécromancienne, 16/10/2026 : le groupe ne la touche plus pendant
+    /// 39 s (changement de phase), puis reprend. Mesuré sur la même cible
+    /// (42839, mob 2300909) : notre meter coupait le combat en deux
+    /// (5,02 M puis 1,30 M, soit 6,32 M) quand Abyss DPS Meter gardait un seul
+    /// combat de 6,63 M. Le journal disait : `Idle reset: target 42839 — gap
+    /// 39051ms`. Un boss encore en vie ne finit pas parce qu'on ne le frappe
+    /// plus 39 s ; un trash, si.
+    #[test]
+    fn un_boss_quon_ne_frappe_plus_39_secondes_reste_le_meme_combat() {
+        let s = DataStorage::new();
+        s.register_boss(42839);
+        s.append_damage(hit(1454, 42839, 1_000, 5_000_000, false));
+        s.append_damage(hit(1454, 42839, 40_000, 1_300_000, false)); // 39 s plus tard
+        let (total, duree) = totals(&s, 42839);
+        assert_eq!(total, 6_300_000, "un seul combat : les deux morceaux comptent");
+        assert_eq!(duree, 39_000);
+    }
+
+    /// Le trash, lui, garde la coupure à 30 s.
+    #[test]
+    fn un_mob_ordinaire_silencieux_30_secondes_repart_de_zero() {
+        let s = DataStorage::new();
+        s.append_damage(hit(1454, 700, 1_000, 100, false));
+        s.append_damage(hit(1454, 700, 40_000, 50, false));
+        assert_eq!(totals(&s, 700).0, 50);
     }
 
     #[test]
