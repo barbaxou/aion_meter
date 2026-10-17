@@ -242,7 +242,6 @@ impl StreamProcessor {
                 super::framing::FrameKind::Packet => {
                     let paquet = frame.bytes(buffer);
                     self.parse_perfect_packet(paquet);
-                    self.note_contents_tickets(paquet);
                     // Ajout XIII NRV : les PV se lisent paquet par paquet.
                     //
                     // Ce balayage tournait sur **tout le tampon**, et
@@ -282,14 +281,17 @@ impl StreamProcessor {
         self.scan_masked_identity(buffer);
         // Party roster (names, levels, gear score, combat power).
         self.scan_party_roster(buffer);
+        // Liste des tickets (Odyle), où qu'elle soit dans le tampon.
+        self.note_contents_tickets(buffer);
 
         offset
     }
 
     /// Liste des tickets de contenu (opcode `0B 61`), envoyée à la sélection du personnage.
     /// On en retient l'Odyle, pour l'afficher hors combat. Ajout XIII NRV (17/10/2026).
-    fn note_contents_tickets(&self, paquet: &[u8]) {
-        if let Some((courant, bonus)) = lire_odyle(paquet) {
+    /// Cherchée dans le tampon entier : voir `lire_odyle`.
+    fn note_contents_tickets(&self, donnees: &[u8]) {
+        if let Some((courant, bonus)) = lire_odyle(donnees) {
             if self.data_storage.note_ode(courant, bonus) {
                 tracing::info!("Odyle lu : {courant} (+{bonus})");
             }
@@ -324,7 +326,6 @@ impl StreamProcessor {
                         self.pending_compact_skill_context = Some(ctx);
                     }
                     self.parse_perfect_packet(inner_packet);
-                    self.note_contents_tickets(inner_packet);
                     // Ajout XIII NRV : les PV se lisent **paquet par paquet**.
                     //
                     // Ce balayage tournait sur le bloc décompressé entier, donc
@@ -337,6 +338,9 @@ impl StreamProcessor {
                 }
             }
         }
+
+        // Liste des tickets (Odyle) dans le contenu décompressé.
+        self.note_contents_tickets(&decompressed);
 
         // Scan for embedded 04 8D and 40 36 in decompressed data
         self.scan_for_embedded_04_8d(&decompressed);
@@ -2417,23 +2421,41 @@ impl StreamProcessor {
 /// le même identifiant porte 75 (+90) pour un personnage et 215 (+30) pour un autre.
 pub const ID_TICKET_ODYLE: u32 = 60_000_001;
 
-/// Lit l'Odyle `(courant, bonus)` dans un paquet « liste des tickets » (opcode `0B 61`).
+/// Entête constant de la charge utile de la liste des tickets de contenu, juste après
+/// l'opcode `0B 61` (relevé sur deux personnages le 17/10/2026).
+const ENTETE_TICKETS: [u8; 8] = [0x0B, 0x61, 0x49, 0x04, 0x01, 0x00, 0x00, 0x00];
+
+/// Cherche, **où qu'elle soit** dans `donnees`, la liste des tickets de contenu (opcode
+/// `0B 61`) et lit l'Odyle `(courant, bonus)`.
 ///
 /// Une entrée de la liste : un octet d'indicateurs, l'identifiant du ticket sur 4 octets
 /// (petit-boutiste), 8 octets si le bit 0 est posé, 8 de plus si le bit 1 l'est, puis un
 /// nombre variable si le bit 2 l'est (le courant) et un autre si le bit 3 l'est (le bonus).
-/// Le reste du paquet est parcouru à la recherche de l'entrée de l'Odyle.
-pub fn lire_odyle(paquet: &[u8]) -> Option<(u32, u32)> {
-    let longueur = read_varint(paquet, 0);
-    if longueur.length <= 0 {
-        return None;
-    }
-    let debut = longueur.length as usize;
-    if paquet.get(debut..debut + 2)? != [0x0B, 0x61] {
-        return None;
-    }
+/// On cherche l'entrée de l'Odyle dans les 700 octets qui suivent l'entête.
+///
+/// Pas d'ancrage sur le début d'un paquet : un meter lancé en cours de flux perd parfois
+/// l'alignement du découpage, et la liste se retrouve au milieu d'un bloc.
+pub fn lire_odyle(donnees: &[u8]) -> Option<(u32, u32)> {
     let id = ID_TICKET_ODYLE.to_le_bytes();
-    let corps = &paquet[debut + 2..];
+    let mut depart = 0;
+    while depart + ENTETE_TICKETS.len() <= donnees.len() {
+        let Some(rel) = donnees[depart..]
+            .windows(ENTETE_TICKETS.len())
+            .position(|w| w == ENTETE_TICKETS)
+        else {
+            return None;
+        };
+        let debut = depart + rel + 2; // après l'opcode
+        let corps = &donnees[debut..donnees.len().min(debut + 700)];
+        if let Some(r) = entree_odyle(corps, id) {
+            return Some(r);
+        }
+        depart += rel + 1;
+    }
+    None
+}
+
+fn entree_odyle(corps: &[u8], id: [u8; 4]) -> Option<(u32, u32)> {
     for i in 0..corps.len().saturating_sub(5) {
         let drapeaux = corps[i];
         if corps[i + 1..i + 5] != id || drapeaux & 0xF0 != 0 || drapeaux & 0x04 == 0 {
@@ -2965,6 +2987,19 @@ mod tests {
         assert_eq!(lire_odyle(&paquet_tickets(&[0xD7, 0x01, 0x1E], 0x0C)), Some((215, 30)));
         // Sans bonus : seul le courant est posé (indicateur 0x04).
         assert_eq!(lire_odyle(&paquet_tickets(&[0x4B], 0x04)), Some((75, 0)));
+    }
+
+    /// 17/10/2026 : meter lancé en cours de flux, le découpage extérieur avait perdu
+    /// l'alignement et la liste des tickets se retrouvait **au milieu** d'un bloc de plusieurs
+    /// milliers d'octets (relevé : 6 578 octets) : l'opcode n'était plus au début. Elle doit
+    /// être trouvée où qu'elle soit.
+    #[test]
+    fn la_liste_des_tickets_est_trouvee_au_milieu_d_un_bloc_mal_decoupe() {
+        use super::lire_odyle;
+        let mut bloc: Vec<u8> = (0..3000u32).map(|i| 0x10 + (i % 0x60) as u8).collect();
+        bloc.extend(paquet_tickets(&[0xE6, 0x01, 0x1E], 0x0C));
+        bloc.extend((0..2000u32).map(|i| 0x20 + (i % 0x50) as u8));
+        assert_eq!(lire_odyle(&bloc), Some((230, 30)));
     }
 
     #[test]

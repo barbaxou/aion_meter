@@ -4005,6 +4005,11 @@ class DpsApp {
 
     const pseudoEl = zone.querySelector(".statutPseudo");
     if (pseudoEl && pseudoEl.textContent !== pseudo) pseudoEl.textContent = pseudo;
+    // Un autre personnage : la classe retenue était celle du précédent.
+    if (this._dernierPseudo !== pseudo) {
+      this._dernierPseudo = pseudo;
+      this._dernierJob = null;
+    }
     if (info?.job) this._dernierJob = info.job;
     const icone = window.StatutVeille?.iconeClasse(this._dernierJob);
     const img = zone.querySelector(".statutClasse");
