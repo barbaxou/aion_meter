@@ -687,6 +687,8 @@ impl StreamProcessor {
         if pos + 4 > packet.len() {
             return false;
         }
+        // Ajout XIII NRV : c'est aussi le paquet de mort (victime, compétence, tueur).
+        self.data_storage.noter_mort_par_paquet(summon_id);
         pos += 4;
 
         let owner_info = read_varint(packet, pos);
@@ -811,6 +813,8 @@ impl StreamProcessor {
             if fixed_field_start + 4 > data.len() {
                 continue;
             }
+            // Ajout XIII NRV : c'est aussi le paquet de mort (victime, compétence, tueur).
+            self.data_storage.noter_mort_par_paquet(summon_id);
 
             // The owner follows: `<owner varint> <server id u16 LE> <len><name>`.
             // The server id was once matched as the literal bytes `E0 07` /
@@ -3186,6 +3190,45 @@ mod tests {
         ] {
             assert_eq!(exact_name(field), None, "{field:?}");
         }
+    }
+
+    /// 17/10/2026, raid : Abyss comptait 5 morts du joueur local, nous 3. Les deux manquées
+    /// étaient des secondes morts rapprochées, sans lecture de PV intermédiaire. Le paquet
+    /// `04 8D` (victime, compétence sur 4 octets, tueur) est présent aux cinq instants.
+    /// Octets tirés de la capture réelle (victime 5364, compétence 1606440, tueur 18875).
+    #[test]
+    fn la_mort_est_lue_dans_le_paquet_meme_sans_lecture_de_pv() {
+        let stockage = Arc::new(DataStorage::new());
+        stockage.append_nickname_authoritative(5364, "Moi");
+        let processor = StreamProcessor::new(
+            stockage.clone(),
+            Arc::new(SkillLookup::new()),
+            Arc::new(NpcLookup::new()),
+        );
+        let mort = |victime: &[u8]| {
+            [
+                &[0x04u8, 0x8d][..],
+                victime,
+                &[0x28, 0x83, 0x18, 0x00, 0xbb, 0x93, 0x01, 0, 0, 0, 0, 0, 0],
+                &[0xe4, 0xeb, 0x8f, 0x01, 0, 0, 0, 0, 0x01, 0x02],
+            ]
+            .concat()
+        };
+
+        // Première mort : vue par les PV (tombés à zéro) ET par le paquet, 40 ms plus tard.
+        stockage.noter_pv_dentite(5364, 20_640);
+        stockage.noter_pv_dentite(5364, 0);
+        processor.scan_for_embedded_04_8d(&mort(&[0xf4, 0x29]));
+        assert_eq!(stockage.morts(5364), 1, "la même mort vue deux fois ne compte qu'une fois");
+
+        // Seconde mort, dix secondes plus tard : aucune lecture de PV entre les deux.
+        std::thread::sleep(std::time::Duration::from_millis(1_600));
+        processor.scan_for_embedded_04_8d(&mort(&[0xf4, 0x29]));
+        assert_eq!(stockage.morts(5364), 2, "la seconde mort est lue dans le paquet");
+
+        // Une victime inconnue (un monstre) ne s'inscrit pas.
+        processor.scan_for_embedded_04_8d(&mort(&[0x9f, 0x8d, 0x06]));
+        assert_eq!(stockage.morts(0x9f | (0x0d << 7) | (6 << 14)), 0);
     }
 
     /// A Sorcerer on Ventus (server 1305) killing a mob, from a player's log

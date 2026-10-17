@@ -33,6 +33,10 @@ const ZONE_RESET_DEBOUNCE_MS: i64 = 4_000;
 /// last roster. See `DataStorage::party_placeholders_wanted`.
 const PARTY_PLACEHOLDER_MS: i64 = 10 * 60 * 1000;
 
+/// Deux annonces de mort de la même entité plus proches que cela sont la même mort (PV tombés
+/// à zéro, paquet de mort, paquet vu deux fois). Une réanimation prend bien plus longtemps.
+const FENETRE_MEME_MORT_MS: i64 = 1500;
+
 fn now_ms() -> i64 {
     crate::clock::now_ms()
 }
@@ -329,6 +333,8 @@ struct Inner {
     morts_par_entite: HashMap<i32, u32>,
     /// Les heures (ms, horloge de capture) de ces morts, pour les compter par combat.
     heures_des_morts: HashMap<i32, Vec<i64>>,
+    /// Dernière mort lue dans le paquet de mort, par entité (voir `noter_mort_par_paquet`).
+    derniere_mort_paquet: HashMap<i32, i64>,
     /// Les coups reçus par chaque joueur : (heure, dégâts). Rangés par heure et non
     /// sur une cible : le compteur de `ActorData` s'ajoutait sur la première cible
     /// où le joueur figurait, et cumulait donc tous les boss d'un donjon (17/10/2026).
@@ -422,6 +428,7 @@ impl DataStorage {
                 dead_entity_ids: HashSet::new(),
                 morts_par_entite: HashMap::new(),
                 heures_des_morts: HashMap::new(),
+                derniere_mort_paquet: HashMap::new(),
                 coups_recus: HashMap::new(),
                 soins_donnes: HashMap::new(),
                 pv_precedents: HashMap::new(),
@@ -853,7 +860,10 @@ impl DataStorage {
         }
         let mut inner = self.inner.write();
         let avant = inner.pv_precedents.insert(entity_id, pv);
-        if pv == 0 && avant.is_some_and(|p| p > 0) {
+        // La même mort peut déjà avoir été lue dans le paquet de mort (`noter_mort_par_paquet`).
+        let deja_lue_par_paquet = inner.derniere_mort_paquet.get(&entity_id)
+            .is_some_and(|&h| now_ms() - h < FENETRE_MEME_MORT_MS);
+        if pv == 0 && avant.is_some_and(|p| p > 0) && !deja_lue_par_paquet {
             let n = inner.morts_par_entite.entry(entity_id).or_insert(0);
             *n += 1;
             let n = *n;
@@ -867,6 +877,33 @@ impl DataStorage {
             // en trace pour voir s'il manquait une mort.
             tracing::debug!("PV à zéro sans lecture précédente : entité {entity_id}, non comptée");
         }
+    }
+
+    /// Une mort lue dans le paquet de mort (`04 8D` : victime, compétence, tueur), comme
+    /// Abyss (`CharDie`). Relevé le 17/10/2026 sur un raid : Abyss comptait cinq morts du
+    /// joueur local, nous trois, car les PV ne repassent pas toujours par une valeur
+    /// positive entre deux morts rapprochées (réanimation puis nouvelle mort en dix secondes).
+    /// Seuls les joueurs connus s'inscrivent (les monstres meurent par milliers). La même
+    /// mort vue par les PV et par le paquet ne compte qu'une fois : fenêtre de 1,5 s.
+    pub fn noter_mort_par_paquet(&self, entity_id: i32) -> bool {
+        let mut inner = self.inner.write();
+        if !inner.known_player_ids.contains(&entity_id) && !inner.nickname_storage.contains_key(&entity_id) {
+            return false;
+        }
+        let t = now_ms();
+        let heures = inner.heures_des_morts.entry(entity_id).or_default();
+        if heures.last().is_some_and(|&h| t - h < FENETRE_MEME_MORT_MS) {
+            return false;
+        }
+        heures.push(t);
+        inner.derniere_mort_paquet.insert(entity_id, t);
+        let n = inner.morts_par_entite.entry(entity_id).or_insert(0);
+        *n += 1;
+        let n = *n;
+        // Les PV qui suivront un zéro déjà compté ici ne doivent pas le recompter.
+        inner.pv_precedents.insert(entity_id, 0);
+        tracing::info!("Mort comptée (paquet) : entité {entity_id}, {n}e fois");
+        true
     }
 
     /// Combien de fois cette entité est tombée depuis la dernière remise à zéro.
