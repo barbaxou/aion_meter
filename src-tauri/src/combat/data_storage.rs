@@ -297,6 +297,11 @@ struct Inner {
     /// When the last roster arrived, and whether its members who have not
     /// fought should still get rows. See `party_placeholders_wanted`.
     party_roster_at_ms: i64,
+    /// Clé du groupe du dernier roster (`02 97`) ; 0 tant qu'aucun n'est vu.
+    party_key: u32,
+    /// Armé par `noter_cle_de_groupe` : le prochain roster est celui d'un autre groupe et
+    /// remplace l'effectif, partiel ou non.
+    groupe_change: bool,
     party_placeholders_hidden: bool,
     /// Instance id the party is in, from the same packet. Encodes the dungeon and
     /// its difficulty tier; resolved to a name by the frontend's dungeon table.
@@ -404,6 +409,8 @@ impl DataStorage {
                 low_id_entities: HashSet::new(),
                 party_members: HashMap::new(),
                 party_roster_at_ms: 0,
+                party_key: 0,
+                groupe_change: false,
                 party_placeholders_hidden: false,
                 current_dungeon_id: 0,
                 actor_power_scalars: HashMap::new(),
@@ -909,6 +916,22 @@ impl DataStorage {
         id >= 1 && self.inner.read().low_id_entities.contains(&id)
     }
 
+    /// Un roster annonce la clé de son groupe : si elle change, c'est un autre groupe.
+    ///
+    /// Un roster partiel (le cas en salle d'attente : 3 membres décodés sur 5 places) ne
+    /// fait que mettre à jour les membres qu'il porte ; sans cela, les membres de
+    /// l'ancien groupe restaient à côté de ceux du nouveau. À appeler avant
+    /// `set_party_roster`, qui fait le remplacement : la fin de groupe (roster « seul »)
+    /// y est jugée d'abord, sur l'effectif d'avant.
+    pub fn noter_cle_de_groupe(&self, cle: u32) {
+        let mut inner = self.inner.write();
+        if inner.party_key != 0 && inner.party_key != cle {
+            tracing::debug!("Autre groupe (clé {cle:08X}) : le prochain roster remplace l'effectif");
+            inner.groupe_change = true;
+        }
+        inner.party_key = cle;
+    }
+
     /// Take a party roster from a `0x9702` packet.
     ///
     /// `complete` says whether every member the packet declared was decoded. A
@@ -916,6 +939,9 @@ impl DataStorage {
     /// disappears; a partial one only updates the members it did decode, so a
     /// record this parser trips over costs that member a refresh rather than
     /// costing the whole party their combat power.
+    ///
+    /// Ajout XIII NRV : un roster d'un **autre groupe** (clé changée, voir
+    /// `noter_cle_de_groupe`) remplace l'effectif même s'il est partiel.
     pub fn set_party_roster(&self, members: Vec<(String, PartyMember)>, complete: bool) {
         if members.is_empty() {
             return;
@@ -945,6 +971,7 @@ impl DataStorage {
                 members.len()
             );
             inner.party_members.clear();
+            inner.groupe_change = false;
             inner.current_dungeon_id = 0;
             drop(inner);
             self.party_generation.fetch_add(1, Ordering::Relaxed);
@@ -967,9 +994,10 @@ impl DataStorage {
             );
         }
 
-        if complete {
+        if complete || inner.groupe_change {
             inner.party_members.clear();
         }
+        inner.groupe_change = false;
         for (name, member) in members {
             inner.party_members.insert(name, member);
         }
@@ -1783,6 +1811,66 @@ mod tests {
         assert_eq!(s.pv_lisses(77), Some(2_400_000));
         s.append_damage(hit(10, 77, 1_200, 200_000, false));
         assert_eq!(s.pv_lisses(77), Some(2_200_000));
+    }
+
+    /// Relevé le 17/10/2026 : en salle d'attente, le roster est toujours partiel (3 membres
+    /// décodés sur 5 places) ; un roster partiel ne fait que mettre à jour, il n'efface
+    /// personne, et l'overlay mélangeait le groupe précédent avec le nouveau. Chaque
+    /// groupe porte une clé : une clé qui change est un autre groupe.
+    #[test]
+    fn une_cle_de_groupe_differente_remplace_le_groupe_meme_si_le_roster_est_partiel() {
+        let s = DataStorage::new();
+        let membres = |noms: &[&str]| -> Vec<(String, PartyMember)> {
+            noms.iter()
+                .enumerate()
+                .map(|(i, n)| (n.to_string(), PartyMember { slot: i as u8, level: 45, ..Default::default() }))
+                .collect()
+        };
+        s.noter_cle_de_groupe(0x0017_8663);
+        s.set_party_roster(membres(&["Barbaxou", "JoueurD", "JoueurG", "JoueurH", "JoueurF"]), true);
+        assert_eq!(s.get_party_members().len(), 5);
+        let avant = s.party_generation();
+
+        // Autre groupe, roster partiel : trois membres décodés.
+        s.noter_cle_de_groupe(0x0017_86A8);
+        s.set_party_roster(membres(&["Barbaxou", "JoueurJ", "JoueurI"]), false);
+        let mut noms: Vec<String> = s.get_party_members().keys().cloned().collect();
+        noms.sort();
+        assert_eq!(noms, ["Barbaxou", "JoueurI", "JoueurJ"], "plus aucun membre de l'ancien groupe");
+        assert!(s.party_generation() > avant);
+
+        // Même clé, roster partiel : on fusionne comme avant (un échec de lecture ne doit
+        // pas faire perdre les membres déjà connus).
+        s.noter_cle_de_groupe(0x0017_86A8);
+        s.set_party_roster(membres(&["JoueurI"]), false);
+        assert_eq!(s.get_party_members().len(), 3);
+    }
+
+    /// Relevé par la relecture du 17/10/2026 : remplacer l'effectif dès l'arrivée d'une
+    /// autre clé court-circuitait « groupe fini » quand le roster « seul » portait une
+    /// clé différente : l'effectif gardait une ligne et le combat n'était pas effacé.
+    #[test]
+    fn un_roster_seul_dune_autre_cle_met_toujours_fin_au_groupe() {
+        let s = DataStorage::new();
+        s.set_local_character_name(Some("Barbaxou".into()));
+        let membres = |noms: &[&str]| -> Vec<(String, PartyMember)> {
+            noms.iter()
+                .enumerate()
+                .map(|(i, n)| (n.to_string(), PartyMember { slot: i as u8, level: 45, ..Default::default() }))
+                .collect()
+        };
+        s.noter_cle_de_groupe(0x0017_8663);
+        s.set_party_roster(membres(&["Barbaxou", "A", "B", "C", "D"]), true);
+        s.append_damage(hit(1085, 900, 1_000, 500_000, false));
+
+        s.noter_cle_de_groupe(0x0017_86A8);
+        s.set_party_roster(membres(&["Barbaxou"]), true);
+        assert!(s.get_party_members().is_empty(), "seul : le groupe est fini, même avec une autre clé");
+        s.append_damage(hit(1085, 901, 2_000, 7_000, false));
+        assert!(
+            s.get_combat_snapshot().get(&900).is_none(),
+            "la cible précédente doit avoir été effacée au coup suivant"
+        );
     }
 
     /// Un effectif complet de cinq membres n'est pas un groupe fini.

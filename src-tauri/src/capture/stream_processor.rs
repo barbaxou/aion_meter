@@ -1069,6 +1069,10 @@ impl StreamProcessor {
                         dungeon_id
                     );
                     self.data_storage.set_current_dungeon(dungeon_id);
+                    // La clé du groupe, juste après l'opcode : une autre clé, c'est un
+                    // autre groupe, dont le roster partiel ne doit pas se fondre dans
+                    // l'ancien.
+                    self.data_storage.noter_cle_de_groupe(parse_u32_le(&data[i + 2..i + 6], 0));
                     self.data_storage.set_party_roster(members, complete);
                     i += 2;
                 }
