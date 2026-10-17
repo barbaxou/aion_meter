@@ -1859,6 +1859,12 @@ const createDetailsUI = ({
   };
 
   const loadDetailsContext = () => {
+    // Ajout XIII NRV : un combat rouvert depuis l'historique garde son propre
+    // contexte. Cliquer sur un joueur appelle open(), qui rechargeait les cibles
+    // et les acteurs du **direct** : l'onglet Temps forts additionnait alors
+    // tous les combats de la session (20,91 M au lieu de 9,86 M, constaté le
+    // 17/10/2026 sur Auldor sacré).
+    if (historyRecord && detailsContext) return detailsContext;
     const nextContext = typeof getDetailsContext === "function" ? getDetailsContext() : null;
     if (!nextContext) {
       detailsContext = null;
