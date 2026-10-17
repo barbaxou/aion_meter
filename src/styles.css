@@ -1014,7 +1014,10 @@ body.mainPlayerDpsBold .meter .item .content .dps > p {
   line-height: 1;
 }
 .meterFooter .battleTime,
-.meterFooter .footerBtns {
+.meterFooter .footerBtns,
+.meterFooter .meterTotalBar {
+  /* Chrono, bouton de tri et total « DPS / dégâts » : plus rien d'autre que la ligne d'infos
+     dans le pied (le total s'ajoutait après un combat et chevauchait l'ode). */
   display: none !important;
 }
 .meterFooter .footerLock {
