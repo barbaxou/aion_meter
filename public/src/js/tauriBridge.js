@@ -782,7 +782,7 @@ Ouvrir la page de telechargement ?`;
     const target = e.target?.nodeType === Node.TEXT_NODE ? e.target.parentElement : e.target;
     // Let interactive elements handle their own clicks normally
     if (target?.closest?.("button, input, select, textarea, a, [data-no-drag]")) return;
-    if (target?.closest?.(".headerBtn, .footerBtn, .bossIcon, .resizeHandle")) return;
+    if (target?.closest?.(".headerBtn, .footerBtn, .lockBtn, .bossIcon, .resizeHandle")) return;
     // Let panel internals work (close buttons, dropdowns, etc.)
     if (target?.closest?.(".settingsPanel, .historyPanel, .detailsBody, .detailsHeader, .detailsSettingsMenu")) return;
     // Let meter bar item clicks pass through for details/hover
