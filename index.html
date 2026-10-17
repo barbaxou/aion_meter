@@ -402,6 +402,18 @@
               <div class="settingsGroupBody settingsGroupStrip">
                 <div class="settingsRow settingsRowSelect">
                   <div class="settingsInfo">
+                    <div class="settingsLabel" data-i18n="mesures.nombre">Nombre de valeurs</div>
+                  </div>
+                  <div class="settingsDropdownWrapper nombreValeursDropdownWrapper">
+                    <button class="settingsDropdownBtn nombreValeursDropdownBtn" type="button">
+                      <span class="settingsDropdownText">-</span>
+                      <span class="settingsDropdownCaret" aria-hidden="true">▾</span>
+                    </button>
+                    <div class="settingsDropdownMenu nombreValeursDropdownMenu" role="menu"></div>
+                  </div>
+                </div>
+                <div class="settingsRow settingsRowSelect">
+                  <div class="settingsInfo">
                     <div class="settingsLabel" data-i18n="mesures.principale">Valeur principale</div>
                   </div>
                   <div class="settingsDropdownWrapper principaleDropdownWrapper">
@@ -422,6 +434,18 @@
                       <span class="settingsDropdownCaret" aria-hidden="true">▾</span>
                     </button>
                     <div class="settingsDropdownMenu secondaireDropdownMenu" role="menu"></div>
+                  </div>
+                </div>
+                <div class="settingsRow settingsRowSelect tertiaireRow">
+                  <div class="settingsInfo">
+                    <div class="settingsLabel" data-i18n="mesures.tertiaire">Valeur tertiaire</div>
+                  </div>
+                  <div class="settingsDropdownWrapper tertiaireDropdownWrapper">
+                    <button class="settingsDropdownBtn tertiaireDropdownBtn" type="button">
+                      <span class="settingsDropdownText">-</span>
+                      <span class="settingsDropdownCaret" aria-hidden="true">▾</span>
+                    </button>
+                    <div class="settingsDropdownMenu tertiaireDropdownMenu" role="menu"></div>
                   </div>
                 </div>
                 <div class="settingsRow settingsRowSelect">
@@ -933,6 +957,13 @@
               Monitoring data...
             </div>
           </div>
+          <!-- Ajout XIII NRV : ligne de statut hors combat : classe, pseudo, ode.
+               Le mode de ciblage et la mesure se règlent dans les paramètres. -->
+          <div class="statutVeille" style="display:none">
+            <img class="statutClasse" alt="" style="display:none" onerror="this.style.display='none'">
+            <span class="statutPseudo"></span>
+            <span class="statutOde" title="Odyle"></span>
+          </div>
           <!-- Ajout XIII NRV : une pastille quand le site annonce une version
                plus recente. Elle ne telecharge rien : un clic ouvre la page de
                la guilde dans le navigateur du membre. -->
@@ -943,19 +974,6 @@
             <span class="meterTotalDmg"></span>
           </div>
           <div class="footerBtns">
-            <button
-              class="footerBtn targetModeBtn"
-              type="button"
-              aria-label="Target mode">
-              TARGET
-            </button>
-            <button
-              class="footerBtn metricToggleBtn"
-              type="button"
-              data-i18n="header.display.dps"
-              aria-label="Showing DPS">
-              DPS
-            </button>
             <div class="footerBtn collapseBtn" role="button" tabindex="0" aria-label="Sort direction">
               <i
                 class="collapseIcon"
@@ -1005,6 +1023,7 @@
     <script src="/src/js/carteCategories.js"></script>
     <script src="/src/js/carte.js"></script>
     <script src="/src/js/groupeHorsCombat.js"></script>
+    <script src="/src/js/statutVeille.js"></script>
 
     <!-- 추가 -->
     <script src="/src/js/checkRelease.js?v=202b6"></script>

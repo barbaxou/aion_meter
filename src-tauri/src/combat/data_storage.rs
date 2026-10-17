@@ -565,6 +565,13 @@ impl DataStorage {
         true
     }
 
+    /// Classe du joueur local (nom coréen de l'icône), connue dès qu'une de ses compétences a été vue.
+    pub fn local_job(&self) -> Option<&'static str> {
+        let inner = self.inner.read();
+        let id = inner.local_player_id? as i32;
+        inner.actor_jobs.get(&id).map(|j| j.class_name())
+    }
+
     /// Retient l'Odyle lu dans la liste des tickets : `courant` et `bonus` (le « 75 (+90) »
     /// affiché par un meter tiers). Rend vrai si la valeur a changé.
     pub fn note_ode(&self, courant: u32, bonus: u32) -> bool {
@@ -1928,6 +1935,16 @@ mod tests {
         s.set_party_roster(membres, true);
         assert!(!s.note_loot_owner(9993, "JoueurA"), "le butin d'un membre ne dit pas qui je suis");
         assert_eq!(s.local_player_id(), None);
+    }
+
+    #[test]
+    fn la_classe_du_joueur_local_se_lit_une_fois_ses_competences_vues() {
+        let s = DataStorage::new();
+        assert_eq!(s.local_job(), None, "rien avant d'avoir un joueur local");
+        s.set_local_player_id(Some(1));
+        assert_eq!(s.local_job(), None, "joueur connu, classe pas encore");
+        s.inner.write().actor_jobs.insert(1, crate::entity::job_class::JobClass::Elementalist);
+        assert_eq!(s.local_job(), Some("정령성"));
     }
 
     /// Un effectif complet de cinq membres n'est pas un groupe fini.

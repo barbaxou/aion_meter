@@ -389,6 +389,8 @@
     "titre": "Affichage de l'overlay",
     "principale": "Valeur principale",
     "secondaire": "Valeur secondaire",
+    "tertiaire": "Valeur tertiaire",
+    "nombre": "Nombre de valeurs",
     "aide": "Les deux valeurs s'affichent en même temps sur chaque ligne. Le bouton en bas de l'overlay fait défiler la valeur principale.",
     "dps": "DPS",
     "totalDamage": "Dégâts totaux",

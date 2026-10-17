@@ -7,6 +7,8 @@ const createMeterUI = ({
   onLeaveUserRow,
   getMetric,
   getMetricSecondaire,
+  getMetricTertiaire,
+  getValeursVisibles,
   getSortDirection,
   getPinUserToTop,
   getPlayerLimit,
@@ -110,8 +112,13 @@ const createMeterUI = ({
     const dpsContribution = document.createElement("p");
     dpsContribution.className = "dpsContribution";
 
+    // Ajout XIII NRV : une troisieme valeur, montree selon le reglage « nombre de valeurs ».
+    const dpsTertiaire = document.createElement("p");
+    dpsTertiaire.className = "dpsContribution dpsTertiaire";
+
     dpsContainer.appendChild(dpsNumber);
     dpsContainer.appendChild(dpsContribution);
+    dpsContainer.appendChild(dpsTertiaire);
 
     contentEl.appendChild(rankEl);
     contentEl.appendChild(classIconEl);
@@ -138,6 +145,7 @@ const createMeterUI = ({
       classIconImg,
       dpsNumber,
       dpsContribution,
+      dpsTertiaire,
       fillEl,
       currentRow: null,
       lastSeenAt: 0,
@@ -449,6 +457,27 @@ const createMeterUI = ({
       if (view.lastContributionText !== contributionText) {
         view.dpsContribution.textContent = contributionText;
         view.lastContributionText = contributionText;
+      }
+
+      // Ajout XIII NRV : le nombre de valeurs (1, 2 ou 3) decide de ce qui s'affiche.
+      const visibles =
+        typeof getValeursVisibles === "function"
+          ? getValeursVisibles()
+          : { secondaire: true, tertiaire: false };
+      const affSecondaire = visibles.secondaire ? "" : "none";
+      if (view.dpsContribution.style.display !== affSecondaire) {
+        view.dpsContribution.style.display = affSecondaire;
+      }
+      const tertiaire =
+        visibles.tertiaire && typeof getMetricTertiaire === "function" ? getMetricTertiaire(row) : null;
+      const tertiaireText = tertiaire ? tertiaire.text : "";
+      if (view.lastTertiaireText !== tertiaireText) {
+        view.dpsTertiaire.textContent = tertiaireText;
+        view.lastTertiaireText = tertiaireText;
+      }
+      const affTertiaire = tertiaireText ? "" : "none";
+      if (view.dpsTertiaire.style.display !== affTertiaire) {
+        view.dpsTertiaire.style.display = affTertiaire;
       }
 
       const rankText = String(rankById?.get(id) ?? "");

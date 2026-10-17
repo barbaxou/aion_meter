@@ -57,6 +57,9 @@ class DpsApp {
       // Ajout XIII NRV : la seconde valeur affichee sur chaque ligne. La
       // premiere reste `displayMode`, que le bouton de l'overlay fait defiler.
       valeurSecondaire: "dpsMeter.valeurSecondaire",
+      // Ajout XIII NRV : une troisieme valeur, et le nombre de valeurs montrees (1, 2 ou 3).
+      valeurTertiaire: "dpsMeter.valeurTertiaire",
+      nombreDeValeurs: "dpsMeter.nombreDeValeurs",
       // Ajout XIII NRV : la teinte des barres des autres joueurs. Celle des
       // thèmes est volontairement discrète, et devenait illisible à faible
       // opacité ; la barre du joueur local, elle, a sa propre couleur.
@@ -267,6 +270,12 @@ class DpsApp {
         const mesure = this.valeurSecondaire();
         return mesure ? this.getMetricForRow(row, mesure) : null;
       },
+      getMetricTertiaire: (row) => {
+        const mesure = this.valeurTertiaire();
+        return mesure ? this.getMetricForRow(row, mesure) : null;
+      },
+      getValeursVisibles: () =>
+        window.StatutVeille?.valeursVisibles(this.nombreDeValeurs()) ?? { secondaire: true, tertiaire: false },
       getSortDirection: () => this.listSortDirection,
       getPinUserToTop: () => this.pinMeToTop,
       getPlayerLimit: () => this.playerLimit,
@@ -365,6 +374,9 @@ class DpsApp {
     // Ping is pushed immediately from PingTracker via window._dpsApp.updatePing().
     // A slow fallback poll handles edge cases (e.g. push not wired yet on startup).
     this._pingTimer = setInterval(() => this.updatePing(), 30000);
+    // Ajout XIII NRV : ligne de statut hors combat (classe, pseudo, ode).
+    this._statutTimer = setInterval(() => this.majStatutVeille(), 1000);
+    this.majStatutVeille();
 
     this.showTotalDps = this.safeGetSetting(this.storageKeys.showTotalDps) !== "false";
     this.appliquerCouleurDesAutres(this.couleurDesAutres());
@@ -2663,6 +2675,29 @@ class DpsApp {
       }
     );
 
+    // Ajout XIII NRV : le nombre de valeurs (1, 2 ou 3) et la troisieme.
+    setupDropdown(
+      document.querySelector(".nombreValeursDropdownBtn"),
+      document.querySelector(".nombreValeursDropdownMenu"),
+      ["1", "2", "3"].map((n) => ({ value: n, label: n })),
+      String(this.nombreDeValeurs()),
+      (value) => {
+        if (!value) return;
+        this.enregistrerNombreDeValeurs(value);
+      }
+    );
+    setupDropdown(
+      document.querySelector(".tertiaireDropdownBtn"),
+      document.querySelector(".tertiaireDropdownMenu"),
+      [{ value: "aucune", label: nomMesure("aucune") }, ...mesuresOptions],
+      this.valeurTertiaire() || "aucune",
+      (value) => {
+        if (!value) return;
+        this.enregistrerValeurTertiaire(value);
+      }
+    );
+    this.majLignesDesValeurs();
+
     // Ajout XIII NRV : la teinte des barres des autres joueurs.
     setupDropdown(
       document.querySelector(".couleurAutresDropdownBtn"),
@@ -3915,6 +3950,76 @@ class DpsApp {
     }
   }
 
+  // Ajout XIII NRV : la troisieme valeur de la ligne, et combien de valeurs on montre.
+  valeurTertiaire() {
+    const lu = this.safeGetSetting(this.storageKeys.valeurTertiaire);
+    if (lu === "aucune") return null;
+    return DpsApp.MESURES.includes(lu) ? lu : "dps";
+  }
+
+  enregistrerValeurTertiaire(valeur) {
+    const propre = valeur === "aucune" || DpsApp.MESURES.includes(valeur) ? valeur : "dps";
+    this.safeSetSetting(this.storageKeys.valeurTertiaire, propre);
+    this.renderCurrentRows();
+  }
+
+  nombreDeValeurs() {
+    return window.StatutVeille?.nombreDeValeurs(this.safeGetSetting(this.storageKeys.nombreDeValeurs)) ?? 2;
+  }
+
+  enregistrerNombreDeValeurs(valeur) {
+    const n = window.StatutVeille?.nombreDeValeurs(valeur) ?? 2;
+    this.safeSetSetting(this.storageKeys.nombreDeValeurs, String(n));
+    this.majLignesDesValeurs();
+    this.renderCurrentRows();
+  }
+
+  // Les réglages de la 2e et de la 3e valeur n'ont de sens que si on les affiche.
+  majLignesDesValeurs() {
+    const visibles = window.StatutVeille?.valeursVisibles(this.nombreDeValeurs()) ?? { secondaire: true, tertiaire: false };
+    const ligne = (selecteur) => document.querySelector(selecteur)?.closest(".settingsRow");
+    const sec = ligne(".secondaireDropdownWrapper");
+    const ter = ligne(".tertiaireDropdownWrapper");
+    if (sec) sec.style.display = visibles.secondaire ? "" : "none";
+    if (ter) ter.style.display = visibles.tertiaire ? "" : "none";
+  }
+
+  // Ajout XIII NRV : hors combat, le pied de l'overlay montre l'icône de classe, le pseudo
+  // et l'ode (l'Odyle). En combat, ou si le jeu n'est pas lancé, c'est le chrono qui reste.
+  majStatutVeille() {
+    const pied = document.querySelector(".meterFooter");
+    const zone = document.querySelector(".statutVeille");
+    if (!pied || !zone) return;
+    let info = null;
+    try {
+      const brut = window.javaBridge?.getConnectionInfo?.();
+      info = brut ? JSON.parse(brut) : null;
+    } catch {
+      info = null;
+    }
+    const pseudo = String(info?.characterName || this.USER_NAME || "").trim();
+    const veille = !!(this.aionRunning && this.isOutOfCombatState() && pseudo);
+    pied.classList.toggle("footerVeille", veille);
+    zone.style.display = veille ? "" : "none";
+    if (!veille) return;
+
+    const pseudoEl = zone.querySelector(".statutPseudo");
+    if (pseudoEl && pseudoEl.textContent !== pseudo) pseudoEl.textContent = pseudo;
+    if (info?.job) this._dernierJob = info.job;
+    const icone = window.StatutVeille?.iconeClasse(this._dernierJob);
+    const img = zone.querySelector(".statutClasse");
+    if (img) {
+      if (icone && img.getAttribute("src") !== icone) img.setAttribute("src", icone);
+      img.style.display = icone ? "" : "none";
+    }
+    const texte = window.StatutVeille?.texteOde(info?.ode) ?? "";
+    const odeEl = zone.querySelector(".statutOde");
+    if (odeEl) {
+      if (odeEl.textContent !== texte) odeEl.textContent = texte;
+      odeEl.style.display = texte ? "" : "none";
+    }
+  }
+
   valeurSecondaire() {
     const lu = this.safeGetSetting(this.storageKeys.valeurSecondaire);
     if (lu === "aucune") return null;
@@ -4127,7 +4232,12 @@ class DpsApp {
     // donc le mecanisme par selecteur ci-dessous ne convient pas. On applique
     // directement, sans rien reecrire : pas de reecriture, pas de rediffusion,
     // pas de boucle.
-    if (key === "dpsMeter.valeurSecondaire") {
+    if (
+      key === "dpsMeter.valeurSecondaire" ||
+      key === "dpsMeter.valeurTertiaire" ||
+      key === "dpsMeter.nombreDeValeurs"
+    ) {
+      this.majLignesDesValeurs();
       this.renderCurrentRows();
       return;
     }

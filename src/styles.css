@@ -936,6 +936,46 @@ body.mainPlayerDpsBold .meter .item .content .dps > p {
   background: rgba(0, 0, 0, 0.22);
 }
 
+/* Ajout XIII NRV : ligne de statut hors combat (classe, pseudo, ode). Elle prend la place
+   du chrono tant que rien ne se bat ; le ping reste a droite. */
+.meterFooter .statutVeille {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1 1 auto;
+  margin-right: auto;
+  font-family: var(--hud-tech);
+  font-variation-settings: "wght" 600, "wdth" 87.5;
+  font-size: 11px;
+  line-height: 1;
+}
+.meterFooter .statutVeille .statutClasse {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  object-fit: contain;
+}
+.meterFooter .statutVeille .statutPseudo {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--hud-num);
+}
+.meterFooter .statutVeille .statutOde {
+  flex: 0 0 auto;
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  color: rgba(255, 255, 255, 0.88);
+}
+.meterFooter.footerVeille .battleTime,
+.meterFooter.footerVeille .meterTotalBar {
+  display: none !important;
+}
+.meter.slim .meterFooter .statutVeille { font-size: 10px; }
+.meter.slim .meterFooter .statutVeille .statutClasse { width: 12px; height: 12px; }
+
 .battleTime {
   display: none;
   align-items: center;

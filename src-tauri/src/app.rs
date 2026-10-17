@@ -370,6 +370,9 @@ fn get_capture_status(state: tauri::State<'_, AppState>) -> serde_json::Value {
         // When true, characterName is the game's (null = an unnamed tutorial
         // character) and the UI should adopt it rather than push its own.
         "characterNameFromGame": state.data_storage.local_identity_from_game(),
+        // Ajout XIII NRV : de quoi remplir la ligne de statut hors combat.
+        "job": state.data_storage.local_job(),
+        "ode": state.data_storage.ode().map(|(courant, bonus)| serde_json::json!({ "courant": courant, "bonus": bonus })),
     })
 }
 

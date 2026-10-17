@@ -389,6 +389,8 @@
     "titre": "Overlay display",
     "principale": "Main value",
     "secondaire": "Second value",
+    "tertiaire": "Third value",
+    "nombre": "Number of values",
     "aide": "Both values show at once on every row. The button at the bottom of the overlay cycles the main value.",
     "dps": "DPS",
     "totalDamage": "Total damage",
