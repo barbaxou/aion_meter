@@ -948,6 +948,7 @@ impl DataStorage {
         }
         let mut inner = self.inner.write();
         let avant = empreinte_du_groupe(&inner.party_members);
+        let autre_groupe = inner.groupe_change;
         inner.party_roster_at_ms = now_ms();
         inner.party_placeholders_hidden = false;
 
@@ -1003,8 +1004,24 @@ impl DataStorage {
         }
         // Le serveur rejoue le même roster des dizaines de fois par seconde : seul un
         // changement réel (membre, CP, niveau) fait refaire l'instantané de l'overlay.
-        if empreinte_du_groupe(&inner.party_members) != avant {
+        let change = empreinte_du_groupe(&inner.party_members) != avant;
+        drop(inner);
+        if change {
             self.party_generation.fetch_add(1, Ordering::Relaxed);
+        }
+        // Ajout XIII NRV (17/10/2026) : en salon, le nouveau groupe remplace le combat
+        // précédent tout de suite, sans attendre le premier coup. Jamais en plein combat.
+        if autre_groupe && now_ms() - self.last_damage_ms.load(Ordering::Relaxed) >= ZONE_RESET_LULL_MS {
+            self.flush_combat_only();
+            let mut inner = self.inner.write();
+            inner.morts_par_entite.clear();
+            inner.heures_des_morts.clear();
+            inner.coups_recus.clear();
+            inner.soins_donnes.clear();
+            drop(inner);
+            self.flush_en_attente.store(false, Ordering::Relaxed);
+            self.combat_reset_requested.store(true, Ordering::Relaxed);
+            tracing::info!("Autre groupe au salon : combat précédent vidé");
         }
     }
 

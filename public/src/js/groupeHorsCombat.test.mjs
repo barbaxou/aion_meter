@@ -14,9 +14,9 @@ const nouveauGroupe = [ligne("JoueurD"), ligne("JoueurE"), ligne("JoueurF")];
 // 17/10/2026 : le nouveau groupe remplace l'ancien tant qu'aucun des deux n'a frappé.
 assert.deepEqual(remplacerParLeGroupe(nouveauGroupe, ancienGroupe), nouveauGroupe);
 
-// Un combat terminé reste affiché : son rendu porte des dégâts.
+// 17/10/2026 : le groupe du salon remplace aussi un combat terminé (rendu avec dégâts).
 const combatFini = [ligne("JoueurA", 1_200_000, 9000), ligne("JoueurB", 900_000, 7000)];
-assert.equal(remplacerParLeGroupe(nouveauGroupe, combatFini), null);
+assert.deepEqual(remplacerParLeGroupe(nouveauGroupe, combatFini), nouveauGroupe);
 
 // Des lignes qui portent des dégâts ne remplacent rien non plus (nouveau combat en cours).
 assert.equal(remplacerParLeGroupe([ligne("JoueurD", 50, 5)], ancienGroupe), null);

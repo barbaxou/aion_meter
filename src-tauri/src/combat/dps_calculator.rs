@@ -1851,6 +1851,38 @@ mod tests_temps_forts {
         assert_eq!(calc.get_dps().map.len(), 0, "plus de groupe, plus de lignes");
     }
 
+    /// 17/10/2026, décision de barbaxou : en salon, le groupe remplace le combat précédent
+    /// (comme Abyss). Une nouvelle clé de groupe vide le combat tout de suite, sans attendre
+    /// le premier coup du groupe suivant.
+    #[test]
+    fn un_autre_groupe_remplace_le_combat_precedent_sans_attendre_un_coup() {
+        let stockage = Arc::new(DataStorage::new());
+        let mut calc = DpsCalculator::new(
+            stockage.clone(),
+            Arc::new(SkillLookup::new()),
+            Arc::new(NpcLookup::new()),
+            Arc::new(PingTracker::new()),
+        );
+        stockage.noter_cle_de_groupe(0x0017_8663);
+        stockage.set_party_roster(groupe_de_cinq(), true);
+        stockage.append_damage(coup(1, 900, 1_000, 500_000, false));
+        stockage.append_damage(coup(2, 900, 9_000, 300_000, false));
+        assert!(calc.get_dps().map.values().any(|d| d.amount > 0.0), "un combat est affiché");
+
+        // Combat fini depuis longtemps ; un autre groupe se forme au salon (3 membres).
+        std::thread::sleep(std::time::Duration::from_millis(1_600));
+        stockage.noter_cle_de_groupe(0x0017_86A8);
+        let nouveau = groupe_de_cinq().into_iter().skip(2).collect();
+        stockage.set_party_roster(nouveau, false);
+
+        let dps = calc.get_dps();
+        assert_eq!(dps.map.len(), 3, "seulement le nouveau groupe");
+        assert!(
+            dps.map.values().all(|d| d.amount == 0.0 && d.dps == 0.0),
+            "aucun dégât de l'ancien combat ne reste"
+        );
+    }
+
     /// Le serveur rejoue le même roster des dizaines de fois par seconde : ce n'est pas
     /// un changement, et ne doit pas faire refaire l'instantané à chaque fois.
     #[test]

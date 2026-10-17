@@ -5,9 +5,11 @@
 // groupe formé après coup n'apparaissait donc jamais : relevé le 17/10/2026, l'overlay
 // montrait encore le groupe précédent alors qu'un nouveau salon était ouvert.
 //
-// Règle : si ni le dernier rendu ni les nouvelles lignes ne portent le moindre dégât,
-// il n'y a rien à garder, c'est un simple roster — on montre le nouveau. Un vrai combat
-// terminé reste affiché jusqu'à la remise à zéro.
+// Règle (17/10/2026, décision de barbaxou : le groupe du salon remplace le combat
+// précédent, comme Abyss) : des lignes sans le moindre dégât sont un simple roster. Le
+// backend ne les envoie ainsi qu'après avoir vidé le combat (autre groupe, remise à zéro) ;
+// on les montre donc, même si le dernier rendu portait des dégâts. Un combat terminé reste
+// affiché tant que le backend envoie ses lignes avec dégâts. L'historique garde le combat.
 //
 // Pur et sans dépendance : testé sous Node (`groupeHorsCombat.test.mjs`).
 (function (racine) {
@@ -23,7 +25,7 @@
   function remplacerParLeGroupe(nouvelles, dernier) {
     if (!Array.isArray(nouvelles) || nouvelles.length === 0) return null;
     if (!Array.isArray(dernier) || dernier.length === 0) return null;
-    return sansDegats(nouvelles) && sansDegats(dernier) ? nouvelles : null;
+    return sansDegats(nouvelles) ? nouvelles : null;
   }
 
   const sortie = { sansDegats, remplacerParLeGroupe };
