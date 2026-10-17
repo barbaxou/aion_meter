@@ -84,6 +84,9 @@ pub struct DpsCalculator {
     current_target: i32,
     last_dps_snapshot: Option<DpsData>,
     last_damage_gen: i64,
+    /// Dernière génération du groupe prise en compte : un roster change les lignes à
+    /// afficher sans qu'aucun coup soit porté.
+    last_party_gen: i64,
     target_selection_mode: TargetSelectionMode,
     last_known_local_id: Option<i64>,
     all_targets_window_ms: i64,
@@ -106,6 +109,7 @@ impl DpsCalculator {
             current_target: 0,
             last_dps_snapshot: None,
             last_damage_gen: -1,
+            last_party_gen: -1,
             target_selection_mode: TargetSelectionMode::BossTargets,
             last_known_local_id: None,
             all_targets_window_ms: 120_000,
@@ -163,10 +167,15 @@ impl DpsCalculator {
 
         // If no new damage since last cycle, return cached result
         let current_gen = self.data_storage.damage_generation();
-        if current_gen == self.last_damage_gen && self.last_dps_snapshot.is_some() {
+        let party_gen = self.data_storage.party_generation();
+        if current_gen == self.last_damage_gen
+            && party_gen == self.last_party_gen
+            && self.last_dps_snapshot.is_some()
+        {
             return self.last_dps_snapshot.as_ref().unwrap().clone();
         }
         self.last_damage_gen = current_gen;
+        self.last_party_gen = party_gen;
 
         // Get pre-computed aggregates (cheap — small map, not 17K packets).
         // Light snapshot: skips per-hit timestamps (unused here, grows unbounded).
@@ -244,16 +253,21 @@ impl DpsCalculator {
         };
 
         if (battle_time == 0 && combined_actors.is_empty()) || combined_actors.is_empty() {
-            if let Some(ref mut snapshot) = self.last_dps_snapshot {
-                snapshot.target_name = dps_data.target_name.clone();
-                snapshot.target_mode = dps_data.target_mode.clone();
-                snapshot.target_id = dps_data.target_id;
-                snapshot.target_max_hp = target_max_hp;
-                snapshot.target_total_damage = 0;
-                snapshot.target_current_hp = target_current_hp;
-                snapshot.dungeon_id = dps_data.dungeon_id;
-                let mut snap = snapshot.clone();
+            if let Some(mut snap) = self.last_dps_snapshot.take() {
+                snap.target_name = dps_data.target_name.clone();
+                snap.target_mode = dps_data.target_mode.clone();
+                snap.target_id = dps_data.target_id;
+                snap.target_max_hp = target_max_hp;
+                snap.target_total_damage = 0;
+                snap.target_current_hp = target_current_hp;
+                snap.dungeon_id = dps_data.dungeon_id;
+                // Les lignes du groupe sont refaites à chaque passage : celles d'un
+                // groupe dissous ou d'un membre parti ne doivent pas rester. Et
+                // l'instantané est rangé, sinon le tick suivant renvoie l'ancien
+                // contenu, sans le groupe (relevé par la relecture du 17/10).
+                snap.map.retain(|_, d| !d.est_place_du_groupe);
                 self.finalize_rows(&mut snap);
+                self.last_dps_snapshot = Some(snap.clone());
                 return snap;
             }
             self.finalize_rows(&mut dps_data);
@@ -549,6 +563,7 @@ impl DpsCalculator {
             // attacked yet, so mark them the way the local player is marked.
             entry.job = "Unknown".to_string();
             entry.combat_power = member.combat_power;
+            entry.est_place_du_groupe = true;
             dps_data.map.entry(uid).or_insert(entry);
         }
     }
@@ -1764,5 +1779,92 @@ mod tests_temps_forts {
         assert_eq!(dans(901, 1).hits_received, 1);
         assert_eq!(dans(900, 2).party_heal, 700);
         assert_eq!(dans(901, 2).party_heal, 200, "les soins du premier boss ne sont pas repris");
+    }
+
+    fn groupe_de_cinq() -> Vec<(String, crate::combat::data_storage::PartyMember)> {
+        (1..=5u8)
+            .map(|i| {
+                (
+                    format!("Joueur{i}"),
+                    crate::combat::data_storage::PartyMember {
+                        slot: i,
+                        combat_power: 60_000 + i as i64 * 1_000,
+                        ..Default::default()
+                    },
+                )
+            })
+            .collect()
+    }
+
+    /// Relevé le 17/10/2026 : le groupe est connu 30 s avant l'entrée en donjon (roster
+    /// `02 97`), mais l'overlay restait vide : l'instantané en cache n'était refait
+    /// qu'à un coup porté, et un roster n'en est pas un.
+    #[test]
+    fn le_groupe_apparait_sans_aucun_coup_porte() {
+        let stockage = Arc::new(DataStorage::new());
+        let mut calc = DpsCalculator::new(
+            stockage.clone(),
+            Arc::new(SkillLookup::new()),
+            Arc::new(NpcLookup::new()),
+            Arc::new(PingTracker::new()),
+        );
+        assert!(calc.get_dps().map.is_empty(), "rien avant le roster");
+
+        stockage.set_party_roster(groupe_de_cinq(), true);
+        let dps = calc.get_dps();
+
+        let mut noms: Vec<String> = dps.map.values().map(|d| d.nickname.clone()).collect();
+        noms.sort();
+        assert_eq!(noms, ["Joueur1", "Joueur2", "Joueur3", "Joueur4", "Joueur5"]);
+        let cp = dps.map.values().find(|d| d.nickname == "Joueur3").map(|d| d.combat_power);
+        assert_eq!(cp, Some(63_000));
+        assert!(dps.map.values().all(|d| d.dps == 0.0), "aucun dégât : le groupe n'a pas combattu");
+
+        // Le tick suivant : rien n'a changé, le groupe doit rester (l'instantané rangé
+        // le porte). Sans cela l'overlay le montrait 500 ms, puis l'oubliait.
+        assert_eq!(calc.get_dps().map.len(), 5, "le groupe reste au tick suivant");
+        assert_eq!(calc.get_dps().map.len(), 5);
+    }
+
+    #[test]
+    fn le_groupe_dissous_ne_reste_pas_a_lecran() {
+        let stockage = Arc::new(DataStorage::new());
+        let mut calc = DpsCalculator::new(
+            stockage.clone(),
+            Arc::new(SkillLookup::new()),
+            Arc::new(NpcLookup::new()),
+            Arc::new(PingTracker::new()),
+        );
+        calc.get_dps();
+        stockage.set_party_roster(groupe_de_cinq(), true);
+        assert_eq!(calc.get_dps().map.len(), 5);
+
+        // Un membre part : seuls quatre lignes restent.
+        let mut quatre = groupe_de_cinq();
+        quatre.pop();
+        stockage.set_party_roster(quatre, true);
+        assert_eq!(calc.get_dps().map.len(), 4, "le membre parti n'est plus affiché");
+
+        // Le groupe se dissout : le serveur n'envoie plus que soi.
+        let seul = groupe_de_cinq().into_iter().take(1).collect();
+        stockage.set_party_roster(seul, true);
+        assert_eq!(calc.get_dps().map.len(), 0, "plus de groupe, plus de lignes");
+    }
+
+    /// Le serveur rejoue le même roster des dizaines de fois par seconde : ce n'est pas
+    /// un changement, et ne doit pas faire refaire l'instantané à chaque fois.
+    #[test]
+    fn un_roster_identique_ne_change_pas_la_generation_du_groupe() {
+        let stockage = DataStorage::new();
+        stockage.set_party_roster(groupe_de_cinq(), true);
+        let apres_premier = stockage.party_generation();
+        assert!(apres_premier > 0, "le premier roster est un changement");
+        stockage.set_party_roster(groupe_de_cinq(), true);
+        assert_eq!(stockage.party_generation(), apres_premier);
+
+        let mut autre = groupe_de_cinq();
+        autre[0].1.combat_power += 1;
+        stockage.set_party_roster(autre, true);
+        assert!(stockage.party_generation() > apres_premier, "un CP qui bouge en est un");
     }
 }

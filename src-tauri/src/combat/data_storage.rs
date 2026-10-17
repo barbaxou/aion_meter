@@ -218,6 +218,10 @@ impl TargetCombatData {
 pub struct DataStorage {
     inner: RwLock<Inner>,
     damage_generation: AtomicI64,
+    /// Change quand le groupe (membres, CP) change : de quoi refaire l'instantané de
+    /// l'overlay sans qu'un coup soit porté. Distinct de `damage_generation`, que
+    /// d'autres décisions (relevés d'historique) lisent.
+    party_generation: AtomicI64,
     /// Wall-clock ms of the last damage record — gates the zone-change lull check.
     last_damage_ms: AtomicI64,
     /// Wall-clock ms of the last honored zone-change reset — debounce.
@@ -423,6 +427,7 @@ impl DataStorage {
                 loot_identity: LootIdentity::default(),
             }),
             damage_generation: AtomicI64::new(0),
+            party_generation: AtomicI64::new(0),
             last_damage_ms: AtomicI64::new(0),
             last_zone_reset_ms: AtomicI64::new(0),
             combat_reset_requested: AtomicBool::new(false),
@@ -463,6 +468,10 @@ impl DataStorage {
     /// state after a zone-change combat reset.
     pub fn take_combat_reset_requested(&self) -> bool {
         self.combat_reset_requested.swap(false, Ordering::Relaxed)
+    }
+
+    pub fn party_generation(&self) -> i64 {
+        self.party_generation.load(Ordering::Relaxed)
     }
 
     pub fn damage_generation(&self) -> i64 {
@@ -912,6 +921,7 @@ impl DataStorage {
             return;
         }
         let mut inner = self.inner.write();
+        let avant = empreinte_du_groupe(&inner.party_members);
         inner.party_roster_at_ms = now_ms();
         inner.party_placeholders_hidden = false;
 
@@ -937,6 +947,7 @@ impl DataStorage {
             inner.party_members.clear();
             inner.current_dungeon_id = 0;
             drop(inner);
+            self.party_generation.fetch_add(1, Ordering::Relaxed);
             self.morts_a_vider.store(true, Ordering::Relaxed);
             self.flush_en_attente.store(true, Ordering::Relaxed);
             return;
@@ -961,6 +972,11 @@ impl DataStorage {
         }
         for (name, member) in members {
             inner.party_members.insert(name, member);
+        }
+        // Le serveur rejoue le même roster des dizaines de fois par seconde : seul un
+        // changement réel (membre, CP, niveau) fait refaire l'instantané de l'overlay.
+        if empreinte_du_groupe(&inner.party_members) != avant {
+            self.party_generation.fetch_add(1, Ordering::Relaxed);
         }
     }
 
@@ -1617,6 +1633,18 @@ fn apply_pending_nickname(inner: &mut Inner, uid: i32) {
     if let Some(pending) = inner.pending_nicknames.remove(&uid) {
         append_nickname_inner(inner, uid, &pending);
     }
+}
+
+/// Ce qui, dans le groupe, se voit à l'écran : de quoi dire si deux rosters diffèrent.
+fn empreinte_du_groupe(
+    membres: &HashMap<String, PartyMember>,
+) -> Vec<(String, u8, i32, i32, i64, u64)> {
+    let mut v: Vec<_> = membres
+        .iter()
+        .map(|(n, m)| (n.clone(), m.slot, m.level, m.gear_score, m.combat_power, m.dbid))
+        .collect();
+    v.sort();
+    v
 }
 
 fn is_friendly_action(inner: &Inner, actor_id: i32, target_id: i32) -> bool {

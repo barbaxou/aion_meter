@@ -39,6 +39,11 @@ pub struct PersonalData {
     /// meter anybody should trust.
     #[serde(default)]
     pub is_supporter: bool,
+    /// Ajout XIII NRV : ligne ajoutée pour un membre du groupe qui n'a encore rien
+    /// frappé (voir `add_party_rows`). Sert à la retirer quand le groupe change ou se
+    /// dissout, sans toucher aux lignes de combat. Pas envoyé à l'interface.
+    #[serde(skip)]
+    pub est_place_du_groupe: bool,
 }
 
 impl PersonalData {
@@ -54,6 +59,7 @@ impl PersonalData {
             heal: 0,
             deaths: 0,
             is_supporter: false,
+            est_place_du_groupe: false,
         }
     }
 
@@ -69,6 +75,7 @@ impl PersonalData {
             heal: 0,
             deaths: 0,
             is_supporter: false,
+            est_place_du_groupe: false,
         }
     }
 
