@@ -977,13 +977,25 @@ body.mainPlayerDpsBold .meter .item .content .dps > p {
 }
 .meterFooter .statutVeille .statutChiffre i {
   font-style: normal;
-  font-size: 11.5px;
+  font-size: 9.5px;
   letter-spacing: 0.04em;
   color: #e8c77a;
 }
 .meterFooter .statutVeille .statutChiffre b {
   font-weight: inherit;
   color: #ffffff;
+}
+.meterFooter .statutVeille .statutGs,
+.meterFooter .statutVeille .statutCp {
+  font-size: 10px;
+}
+/* L'icône de l'Odyle (tirée de notre base d'objets : Icon_Item_Odenergy_A_001) remplace « OD ». */
+.meterFooter .statutVeille .statutIconeOde {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+  align-self: center;
 }
 /* Le bonus de l'ode, d'une autre couleur que le chiffre qu'il accompagne. */
 .meterFooter .statutVeille .statutChiffre em {
