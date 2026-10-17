@@ -306,6 +306,12 @@ pub fn rafraichir_depuis_le_groupe() {
 
 static ETAT: OnceLock<Mutex<Etat>> = OnceLock::new();
 
+/// Gear Score (Item Level) et Combat Power du personnage lu, pour la ligne de statut.
+pub fn chiffres() -> (Option<u32>, Option<u32>) {
+    let e = etat().lock();
+    (e.item_level, e.combat_power)
+}
+
 /// Nom du dernier personnage lu (relu du disque au démarrage), s'il y en a un.
 pub fn nom_connu() -> Option<String> {
     let nom = etat().lock().nom.clone();

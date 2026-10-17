@@ -372,6 +372,8 @@ fn get_capture_status(state: tauri::State<'_, AppState>) -> serde_json::Value {
         "characterNameFromGame": state.data_storage.local_identity_from_game(),
         // Ajout XIII NRV : de quoi remplir la ligne de statut hors combat.
         "job": state.data_storage.local_job(),
+        "gs": crate::xiiinrv::collecte::chiffres().0,
+        "cp": crate::xiiinrv::collecte::chiffres().1,
         "ode": state.data_storage.ode().map(|(courant, bonus)| serde_json::json!({ "courant": courant, "bonus": bonus })),
     })
 }

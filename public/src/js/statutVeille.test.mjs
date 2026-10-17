@@ -5,7 +5,7 @@ import fs from "node:fs";
 
 const contexte = { module: { exports: {} } };
 vm.runInNewContext(fs.readFileSync(new URL("./statutVeille.js", import.meta.url), "utf8"), contexte);
-const { texteOde, iconeClasse, nombreDeValeurs, valeursVisibles } = contexte.module.exports;
+const { texteOde, texteGs, texteCp, iconeClasse, nombreDeValeurs, valeursVisibles } = contexte.module.exports;
 
 // L'ode : le courant, puis le bonus entre parenthèses.
 assert.equal(texteOde({ courant: 75, bonus: 90 }), "75 (+90)");
@@ -29,5 +29,15 @@ const v = (n) => JSON.stringify(valeursVisibles(n));
 assert.equal(v(1), JSON.stringify({ secondaire: false, tertiaire: false }));
 assert.equal(v(2), JSON.stringify({ secondaire: true, tertiaire: false }));
 assert.equal(v(3), JSON.stringify({ secondaire: true, tertiaire: true }));
+
+// Gear Score et Combat Power : compacts, vides tant qu'ils ne sont pas lus.
+assert.equal(texteGs(1580), "1580");
+assert.equal(texteGs(null), "");
+assert.equal(texteGs(0), "");
+assert.equal(texteCp(88774), "88.8K");
+assert.equal(texteCp(120300), "120.3K");
+assert.equal(texteCp(950), "950");
+assert.equal(texteCp(1_250_000), "1.25M");
+assert.equal(texteCp(undefined), "");
 
 console.log("statutVeille : ok");

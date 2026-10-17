@@ -936,12 +936,13 @@ body.mainPlayerDpsBold .meter .item .content .dps > p {
   background: rgba(0, 0, 0, 0.22);
 }
 
-/* Ajout XIII NRV : ligne de statut hors combat (classe, pseudo, ode). Elle prend la place
-   du chrono tant que rien ne se bat ; le ping reste a droite. */
+/* Ajout XIII NRV : la ligne du bas est la ligne d'infos du joueur, toujours visible :
+   classe, pseudo, GS, CP, ode, puis le ping et le verrou. Le chrono et le bouton de tri
+   n'y sont plus (le chrono reste calculé, il n'est plus montré). */
 .meterFooter .statutVeille {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   min-width: 0;
   flex: 1 1 auto;
   margin-right: auto;
@@ -963,16 +964,45 @@ body.mainPlayerDpsBold .meter .item .content .dps > p {
   white-space: nowrap;
   color: var(--hud-num);
 }
-.meterFooter .statutVeille .statutOde {
-  flex: 0 0 auto;
-  margin-left: auto;
-  font-variant-numeric: tabular-nums;
-  color: rgba(255, 255, 255, 0.88);
+.meterFooter .statutVeille .statutPseudo.statutAttente {
+  color: var(--hud-sub);
+  font-weight: 400;
 }
-.meterFooter.footerVeille .battleTime,
-.meterFooter.footerVeille .meterTotalBar {
+.meterFooter .statutVeille .statutChiffre {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 3px;
+  font-variant-numeric: tabular-nums;
+}
+.meterFooter .statutVeille .statutChiffre i {
+  font-style: normal;
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  color: var(--hud-sub);
+}
+.meterFooter .statutVeille .statutChiffre b {
+  font-weight: inherit;
+  color: rgba(255, 255, 255, 0.9);
+}
+.meterFooter .battleTime,
+.meterFooter .footerBtns {
   display: none !important;
 }
+.meterFooter .footerLock {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-left: 2px;
+  cursor: pointer;
+  color: var(--hud-sub);
+}
+.meterFooter .footerLock:hover { color: var(--hud-num); }
+.meterFooter .footerLock.isLocked { color: #7fe0c8; }
+.meterFooter .footerLock svg { width: 12px; height: 12px; }
 .meter.slim .meterFooter .statutVeille { font-size: 10px; }
 .meter.slim .meterFooter .statutVeille .statutClasse { width: 12px; height: 12px; }
 

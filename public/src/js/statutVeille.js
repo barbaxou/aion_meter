@@ -23,6 +23,21 @@
     return `./assets/${nom}.png`;
   }
 
+  // Gear Score : l'entier tel quel (1580), ou « » tant qu'il n'est pas lu.
+  function texteGs(valeur) {
+    const n = entier(valeur);
+    return n === null || n === 0 ? "" : String(n);
+  }
+
+  // Combat Power compact, comme sur les lignes : 88774 -> « 88.8K », 1250000 -> « 1.25M ».
+  function texteCp(valeur) {
+    const n = entier(valeur);
+    if (n === null || n === 0) return "";
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2).replace(/\.?0+$/, "")}M`;
+    if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;
+    return String(n);
+  }
+
   // Nombre de valeurs affichées par ligne : 1, 2 ou 3 (2 par défaut, comme avant).
   function nombreDeValeurs(brut) {
     const n = Number(brut);
@@ -35,7 +50,7 @@
     return { secondaire: n >= 2, tertiaire: n >= 3 };
   }
 
-  const sortie = { texteOde, iconeClasse, nombreDeValeurs, valeursVisibles };
+  const sortie = { texteOde, texteGs, texteCp, iconeClasse, nombreDeValeurs, valeursVisibles };
   if (racine && typeof module !== "undefined" && module.exports) {
     module.exports = sortie;
     return;

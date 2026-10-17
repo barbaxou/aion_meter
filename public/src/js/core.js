@@ -3984,12 +3984,11 @@ class DpsApp {
     if (ter) ter.style.display = visibles.tertiaire ? "" : "none";
   }
 
-  // Ajout XIII NRV : hors combat, le pied de l'overlay montre l'icône de classe, le pseudo
-  // et l'ode (l'Odyle). En combat, ou si le jeu n'est pas lancé, c'est le chrono qui reste.
+  // Ajout XIII NRV : la ligne du bas est la ligne d'infos du joueur, toujours visible :
+  // icône de classe, pseudo, GS, CP, ode (l'Odyle), puis le ping et le verrou.
   majStatutVeille() {
-    const pied = document.querySelector(".meterFooter");
     const zone = document.querySelector(".statutVeille");
-    if (!pied || !zone) return;
+    if (!zone) return;
     let info = null;
     try {
       const brut = window.javaBridge?.getConnectionInfo?.();
@@ -3997,33 +3996,48 @@ class DpsApp {
     } catch {
       info = null;
     }
+    const SV = window.StatutVeille;
     const pseudo = String(info?.characterName || this.USER_NAME || "").trim();
-    const veille = !!(this.aionRunning && this.isOutOfCombatState() && pseudo);
-    pied.classList.toggle("footerVeille", veille);
-    zone.style.display = veille ? "" : "none";
-    if (!veille) return;
-
     const pseudoEl = zone.querySelector(".statutPseudo");
-    if (pseudoEl && pseudoEl.textContent !== pseudo) pseudoEl.textContent = pseudo;
+    if (pseudoEl) {
+      // Sans pseudo, dire pourquoi plutôt que de laisser la ligne vide.
+      const texte = pseudo
+        ? pseudo
+        : this.aionRunning
+          ? this.i18n?.t("statut.attente", "Téléportez-vous pour être détecté") ?? "Téléportez-vous pour être détecté"
+          : this.i18n?.t("battleTime.notRunning", "AION2 not running") ?? "AION2 not running";
+      if (pseudoEl.textContent !== texte) pseudoEl.textContent = texte;
+      pseudoEl.classList.toggle("statutAttente", !pseudo);
+    }
+
     // Un autre personnage : la classe retenue était celle du précédent.
     if (this._dernierPseudo !== pseudo) {
       this._dernierPseudo = pseudo;
       this._dernierJob = null;
     }
     if (info?.job) this._dernierJob = info.job;
-    const icone = window.StatutVeille?.iconeClasse(this._dernierJob);
+    const icone = SV?.iconeClasse(this._dernierJob);
     const img = zone.querySelector(".statutClasse");
     if (img) {
       if (icone && img.getAttribute("src") !== icone) img.setAttribute("src", icone);
       img.style.display = icone ? "" : "none";
     }
-    const texte = window.StatutVeille?.texteOde(info?.ode) ?? "";
-    const odeEl = zone.querySelector(".statutOde");
-    if (odeEl) {
-      if (odeEl.textContent !== texte) odeEl.textContent = texte;
-      odeEl.style.display = texte ? "" : "none";
-    }
+
+    const remplir = (selecteur, texte) => {
+      const el = zone.querySelector(selecteur);
+      if (!el) return;
+      const nombre = el.querySelector("b");
+      if (nombre && nombre.textContent !== texte) nombre.textContent = texte;
+      el.style.display = texte ? "" : "none";
+    };
+    remplir(".statutGs", SV?.texteGs(info?.gs) ?? "");
+    remplir(".statutCp", SV?.texteCp(info?.cp) ?? "");
+    remplir(".statutOde", SV?.texteOde(info?.ode) ?? "");
+
+    // Le verrou a bougé avec la ligne : le serveur doit savoir où il est pour le laisser cliquable.
+    this._sendLockBtnRect?.();
   }
+
 
   valeurSecondaire() {
     const lu = this.safeGetSetting(this.storageKeys.valeurSecondaire);
@@ -5001,7 +5015,7 @@ class DpsApp {
       .then((supported) => {
         if (!supported) return;
         document.querySelectorAll(".lockSetting").forEach((el) => { el.style.display = ""; });
-        const show = this.safeGetSetting(this.storageKeys.showLockBtn) === "true";
+        const show = this.safeGetSetting(this.storageKeys.showLockBtn) !== "false";
         if (this.showLockBtnCheckbox) {
           this.showLockBtnCheckbox.checked = show;
           this.showLockBtnCheckbox.addEventListener("change", (event) => {
@@ -5035,6 +5049,10 @@ class DpsApp {
     if (!this.lockBtn || this.lockBtn.style.display === "none") return;
     const r = this.lockBtn.getBoundingClientRect();
     if (!r.width || !r.height) return;
+    // Rien à renvoyer si le bouton n'a pas bougé (la ligne est rafraîchie chaque seconde).
+    const cle = [r.left, r.top, r.width, r.height, window.devicePixelRatio || 1].join(",");
+    if (cle === this._cleRectVerrou) return;
+    this._cleRectVerrou = cle;
     window.javaBridge?.setLockButtonRect?.(r.left, r.top, r.width, r.height, window.devicePixelRatio || 1);
   }
 
