@@ -1647,6 +1647,7 @@ async fn replay_file(state: tauri::State<'_, AppState>, file_path: String) -> Re
                 None => continue,
             };
             packet_count += 1;
+            processor.ecouter_flux_ombre(&data);
             processor.consume_stream(&data);
         }
 

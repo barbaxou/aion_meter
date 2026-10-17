@@ -178,6 +178,8 @@ pub struct StreamProcessor {
     seen_embedded_hexes: BoundedHashSet,
     dot_damage_skill_ids: HashSet<i32>,
     pending_compact_skill_context: Option<PendingCompactSkillContext>,
+    /// Octets bruts du flux, découpés à part pour la liste des tickets (voir `ecouter_flux_ombre`).
+    flux_ombre: Vec<u8>,
     /// Ajout XIII NRV : l'heure à laquelle la carte réseau a vu le morceau en
     /// cours de traitement. Les coups sont horodatés avec elle plutôt qu'avec
     /// l'heure du traitement, qui peut arriver bien plus tard quand le flux a
@@ -197,6 +199,7 @@ impl StreamProcessor {
             seen_embedded_hexes: BoundedHashSet::new(16_384),
             dot_damage_skill_ids: HashSet::new(), // loaded lazily
             pending_compact_skill_context: None,
+            flux_ombre: Vec::new(),
             capture_time_ms: 0,
             override_timestamp: None,
         }
@@ -295,6 +298,53 @@ impl StreamProcessor {
             if self.data_storage.note_ode(courant, bonus) {
                 tracing::info!("Odyle lu : {courant} (+{bonus})");
             }
+        }
+    }
+
+    /// Flux d'ombre pour la liste des tickets (l'ode), **en lecture seule** : les octets bruts
+    /// du flux sont découpés avec la règle de taille d'Abyss (`framing::walk_regle_abyss`),
+    /// dans un tampon à part, avec son propre alignement. Le découpage qui pilote les dégâts
+    /// reste celui de `walk` : on ne sait pas laquelle des deux règles est juste pour les
+    /// dégâts subis. Ajout XIII NRV (17/10/2026).
+    ///
+    /// Appelé par `StreamAssembler::process_chunk` avec chaque morceau reçu.
+    pub fn ecouter_flux_ombre(&mut self, donnees: &[u8]) {
+        fn parcourir(proc_: &StreamProcessor, octets: &[u8], profondeur: usize) {
+            if profondeur > 4 {
+                return;
+            }
+            for frame in &super::framing::walk_regle_abyss(octets).frames {
+                match frame.kind {
+                    super::framing::FrameKind::Bundle => {
+                        if let Some(interieur) = super::framing::decompress_bundle(frame.payload(octets)) {
+                            proc_.note_contents_tickets(&interieur);
+                            parcourir(proc_, &interieur, profondeur + 1);
+                        }
+                    }
+                    super::framing::FrameKind::Packet => proc_.note_contents_tickets(frame.bytes(octets)),
+                }
+            }
+        }
+
+        self.flux_ombre.extend_from_slice(donnees);
+        let tampon = std::mem::take(&mut self.flux_ombre);
+        let cadrage = super::framing::walk_regle_abyss(&tampon);
+        for frame in &cadrage.frames {
+            match frame.kind {
+                super::framing::FrameKind::Bundle => {
+                    if let Some(interieur) = super::framing::decompress_bundle(frame.payload(&tampon)) {
+                        self.note_contents_tickets(&interieur);
+                        parcourir(self, &interieur, 1);
+                    }
+                }
+                super::framing::FrameKind::Packet => self.note_contents_tickets(frame.bytes(&tampon)),
+            }
+        }
+        // On ne garde que la fin, non consommée : un paquet incomplet attend la suite.
+        let reste = &tampon[cadrage.consumed..];
+        self.flux_ombre = reste.to_vec();
+        if self.flux_ombre.len() > 200_000 {
+            self.flux_ombre.clear();
         }
     }
 
@@ -2993,6 +3043,53 @@ mod tests {
     /// l'alignement et la liste des tickets se retrouvait **au milieu** d'un bloc de plusieurs
     /// milliers d'octets (relevé : 6 578 octets) : l'opcode n'était plus au début. Elle doit
     /// être trouvée où qu'elle soit.
+    /// 17/10/2026, capture de 15:23 : un gros paquet extérieur précède le groupé qui porte la
+    /// liste des tickets. Avec la règle de taille historique (`walk`), le groupé est lu un octet
+    /// trop tôt et perdu ; la règle d'Abyss, appliquée en lecture seule pour l'ode, le retrouve.
+    #[test]
+    fn l_ode_apres_un_gros_paquet_exterieur_est_lue_sans_changer_le_decoupage_des_degats() {
+        use std::sync::Arc;
+        let mut gros: Vec<u8> = (0..200u32).map(|i| 0x10 + (i % 0x40) as u8).collect();
+        // Le dernier octet du gros paquet, lu un octet trop tôt, passe pour une longueur
+        // (0x40 : 61 octets) et avale le début du groupé : le cas qui perdait la liste.
+        *gros.last_mut().unwrap() = 0x40;
+        let annonce_gros = gros.len() + 2 + 2;
+        let mut flux = vec![(annonce_gros & 0x7F) as u8 | 0x80, (annonce_gros >> 7) as u8];
+        flux.extend_from_slice(&gros);
+
+        // Une copie de l'entête (sans entrée d'Odyle derrière) précède la vraie liste : LZ4 la
+        // compresse alors en renvoi, et l'entête n'apparaît plus en clair dans le flux, comme
+        // dans la capture réelle (la recherche dans le tampon brut ne peut plus la trouver).
+        let mut interieur: Vec<u8> = vec![0x0B, 0x61, 0x49, 0x04, 0x01, 0x00, 0x00, 0x00, 0x0E, 0x01, 0x03, 0x00, 0x00, 0x00];
+        // Plus de 700 octets incompressibles entre cette copie et la vraie liste : la recherche
+        // dans le tampon brut (fenêtre de 700 octets) ne peut pas relier l'une à l'autre.
+        let mut graine = 12345u32;
+        interieur.extend((0..900).map(|_| {
+            graine = graine.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+            0xA0 | ((graine >> 16) & 0x0F) as u8
+        }));
+        interieur.extend(paquet_tickets(&[0xE6, 0x01, 0x1E], 0x0C));
+        let compresse = lz4_flex::block::compress(&interieur);
+        let mut groupe = vec![0xFF, 0xFF];
+        groupe.extend_from_slice(&(interieur.len() as u32).to_le_bytes());
+        groupe.extend(compresse);
+        let annonce_groupe = groupe.len() + 2 + 2;
+        flux.push((annonce_groupe & 0x7F) as u8 | 0x80);
+        flux.push((annonce_groupe >> 7) as u8);
+        flux.extend(groupe);
+
+        let stockage = Arc::new(super::DataStorage::new());
+        let mut proc_ = super::StreamProcessor::new(
+            stockage.clone(),
+            Arc::new(crate::i18n::lookup::SkillLookup::new()),
+            Arc::new(crate::i18n::lookup::NpcLookup::new()),
+        );
+        // Comme en production : les morceaux passent par l'assembleur de flux.
+        let mut assembleur = crate::capture::stream_assembler::StreamAssembler::new();
+        assembleur.process_chunk(&flux, &mut proc_);
+        assert_eq!(stockage.ode(), Some((230, 30)));
+    }
+
     #[test]
     fn la_liste_des_tickets_est_trouvee_au_milieu_d_un_bloc_mal_decoupe() {
         use super::lire_odyle;

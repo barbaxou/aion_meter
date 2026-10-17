@@ -16,6 +16,8 @@ impl StreamAssembler {
     /// Process a TCP chunk. Returns true if any packets were successfully parsed.
     pub fn process_chunk(&mut self, data: &[u8], processor: &mut StreamProcessor) -> bool {
         self.accumulator.append(data);
+        // Flux d'ombre pour l'ode : découpage à part, en lecture seule (voir `StreamProcessor`).
+        processor.ecouter_flux_ombre(data);
         let mut parsed_any = false;
 
         loop {

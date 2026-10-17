@@ -219,6 +219,63 @@ pub fn walk(buffer: &[u8]) -> Framing {
     out
 }
 
+/// Même découpage que [`walk`], avec la règle de taille mesurée chez un autre meter le
+/// 17/10/2026 : taille réelle = longueur annoncée - 4 + largeur du champ de longueur
+/// (-3 pour un champ d'un octet, -2 pour deux, -1 pour trois), et aucun octet de plus pour
+/// un groupé.
+///
+/// **Lecture seule, pour la liste des tickets (l'ode)** : cette règle retrouve des paquets
+/// que `walk` perd après un gros paquet, mais elle ne doit pas piloter les dégâts. Sur le
+/// donjon du 17/10 les dégâts donnés sont identiques avec les deux règles, tandis que les
+/// dégâts subis diffèrent (0 contre 246 072 sur un boss), et le rejeu du 05/10 perd les
+/// siens. Tant qu'on ne sait pas laquelle est juste pour eux, `walk` reste la règle des
+/// dégâts. Pas de compteurs de reprises ici : ils décrivent `walk`.
+pub fn walk_regle_abyss(buffer: &[u8]) -> Framing {
+    let mut out = Framing::default();
+    let mut offset = 0usize;
+
+    while offset < buffer.len() {
+        if buffer[offset] == 0x00 {
+            offset += 1;
+            continue;
+        }
+        let length_info = read_varint(buffer, offset);
+        if length_info.length <= 0 || length_info.value <= 0 {
+            if offset + 5 > buffer.len() {
+                break;
+            }
+            offset += 1;
+            continue;
+        }
+        let total = (length_info.value - 4 + length_info.length).max(0) as usize;
+        if total == 0 || total > MAX_PACKET_BYTES {
+            offset += 1;
+            continue;
+        }
+        if offset + total > buffer.len() {
+            if total > MAX_FRAGMENT_WAIT_BYTES {
+                offset += 1;
+                continue;
+            }
+            break;
+        }
+        let payload_start = length_info.length as usize;
+        let is_bundle = payload_start + 1 < total
+            && buffer[offset + payload_start] == 0xFF
+            && buffer[offset + payload_start + 1] == 0xFF;
+        out.frames.push(Frame {
+            kind: if is_bundle { FrameKind::Bundle } else { FrameKind::Packet },
+            start: offset,
+            end: offset + total,
+            payload_start,
+        });
+        offset += total;
+    }
+
+    out.consumed = offset;
+    out
+}
+
 /// Walk the *decompressed* contents of a bundle.
 ///
 /// Same varint framing as [`walk`], but the resync rules differ and the
@@ -358,6 +415,23 @@ mod tests {
         assert_eq!(f.consumed, buf.len());
         assert_eq!(f.frames[0].payload(&buf), &gros[..]);
         assert_eq!(f.frames[1].payload(&buf), &[0x41, 0x36, 0x02, 0x03]);
+    }
+
+    /// La règle d'Abyss lit un gros paquet extérieur à la bonne taille ; `walk` (règle
+    /// historique, qui pilote les dégâts) le lit un octet trop court.
+    #[test]
+    fn la_regle_d_abyss_ne_decale_pas_apres_un_gros_paquet_exterieur() {
+        let gros: Vec<u8> = (0..200u32).map(|i| 0x10 + (i % 0x40) as u8).collect();
+        let annonce = gros.len() + 2 + 2;
+        let mut buf = vec![(annonce & 0x7F) as u8 | 0x80, (annonce >> 7) as u8];
+        buf.extend_from_slice(&gros);
+        buf.extend(packet(&[0x41, 0x36, 0x02, 0x03]));
+        let f = walk_regle_abyss(&buf);
+        assert_eq!(f.frames.len(), 2, "le gros paquet puis le petit");
+        assert_eq!(f.consumed, buf.len());
+        assert_eq!(f.frames[0].payload(&buf), &gros[..]);
+        assert_eq!(f.frames[1].payload(&buf), &[0x41, 0x36, 0x02, 0x03]);
+        assert_eq!(walk(&buf).frames.len(), 1, "walk reste inchangé : règle historique");
     }
 
     #[test]
