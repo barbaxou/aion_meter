@@ -373,6 +373,8 @@ struct Inner {
     /// Who the loot records (`04 8d` after a kill) say owns the drops, and
     /// what that has been used for. See `note_loot_owner`.
     loot_identity: LootIdentity,
+    /// Odyle (« ode ») : nombre actuel et bonus, lus dans la liste des tickets de contenu.
+    ode: Option<(u32, u32)>,
 }
 
 #[derive(Default)]
@@ -432,6 +434,7 @@ impl DataStorage {
                 local_character_name: None,
                 local_identity_from_game: false,
                 loot_identity: LootIdentity::default(),
+                ode: None,
             }),
             damage_generation: AtomicI64::new(0),
             party_generation: AtomicI64::new(0),
@@ -560,6 +563,21 @@ impl DataStorage {
         inner.loot_identity.applied = true;
         set_game_identity(&mut inner, owner_id as i64, Some(name.to_string()));
         true
+    }
+
+    /// Retient l'Odyle lu dans la liste des tickets : `courant` et `bonus` (le « 75 (+90) »
+    /// affiché par un meter tiers). Rend vrai si la valeur a changé.
+    pub fn note_ode(&self, courant: u32, bonus: u32) -> bool {
+        let mut inner = self.inner.write();
+        let nouveau = Some((courant, bonus));
+        let change = inner.ode != nouveau;
+        inner.ode = nouveau;
+        change
+    }
+
+    /// Dernier Odyle lu (courant, bonus), ou `None` tant que la liste des tickets n'est pas passée.
+    pub fn ode(&self) -> Option<(u32, u32)> {
+        self.inner.read().ode
     }
 
     /// Whether the local player's identity came from the game rather than from

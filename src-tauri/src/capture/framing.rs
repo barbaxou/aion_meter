@@ -229,8 +229,9 @@ pub fn walk(buffer: &[u8]) -> Framing {
 /// wrong, and walking further would invent packets. It stops instead.
 ///
 /// The other asymmetry to preserve: an outer bundle occupies `len - 3 + 1`
-/// bytes, a nested one occupies `len - 3`. That extra byte is real and dropping
-/// it desynchronises the rest of the buffer.
+/// bytes. Inside a bundle, a packet occupies `len - 4 + width of its length
+/// field`, which is `len - 3` for the common one-byte field and `len - 2` for a
+/// large packet (see the note on `total` below).
 pub fn walk_inner(buffer: &[u8]) -> Framing {
     let mut out = Framing::default();
     let mut offset = 0usize;
@@ -251,7 +252,13 @@ pub fn walk_inner(buffer: &[u8]) -> Framing {
             offset += 1;
             continue;
         }
-        let total = (length_info.value - 3) as usize;
+        // Ajout XIII NRV (17/10/2026) : taille réelle = longueur - 4 + largeur du champ de
+        // longueur (-3 pour un champ d'un octet, -2 pour deux, -1 pour trois). Mesuré sur
+        // 130 000 paquets du flux d'un autre meter. L'ancienne règle « -3 » valait pour tous
+        // les champs : un gros paquet décalait d'un octet le suivant, et le paquet des
+        // tickets de contenu (495 octets annoncés) n'était jamais lu. La règle du découpage
+        // extérieur (`walk`) reste « -3 » : la corriger là fait baisser le rejeu du 05/10.
+        let total = (length_info.value - 4 + length_info.length) as usize;
 
         let end = offset + total;
         if end > buffer.len() {
@@ -334,6 +341,23 @@ mod tests {
         let f = walk(&buf);
         assert_eq!(f.frames.len(), 1);
         assert_eq!(f.consumed, full, "the fragment must be left for the next read");
+    }
+
+    /// Dans un paquet groupé, un gros paquet (champ de longueur sur deux octets) occupe
+    /// `longueur - 2` octets. Sans cela, le paquet suivant est lu un octet trop tôt et la
+    /// suite du groupé est perdue.
+    #[test]
+    fn dans_un_paquet_groupe_un_gros_paquet_ne_decale_pas_le_suivant() {
+        let gros: Vec<u8> = (0..200u32).map(|i| 0x10 + (i % 0x40) as u8).collect();
+        let annonce = gros.len() + 2 + 2; // 2 octets de longueur + corps, plus 2 : -4 + largeur
+        let mut buf = vec![(annonce & 0x7F) as u8 | 0x80, (annonce >> 7) as u8];
+        buf.extend_from_slice(&gros);
+        buf.extend(packet(&[0x41, 0x36, 0x02, 0x03]));
+        let f = walk_inner(&buf);
+        assert_eq!(f.frames.len(), 2, "le gros paquet puis le petit");
+        assert_eq!(f.consumed, buf.len());
+        assert_eq!(f.frames[0].payload(&buf), &gros[..]);
+        assert_eq!(f.frames[1].payload(&buf), &[0x41, 0x36, 0x02, 0x03]);
     }
 
     #[test]

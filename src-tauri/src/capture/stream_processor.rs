@@ -242,6 +242,7 @@ impl StreamProcessor {
                 super::framing::FrameKind::Packet => {
                     let paquet = frame.bytes(buffer);
                     self.parse_perfect_packet(paquet);
+                    self.note_contents_tickets(paquet);
                     // Ajout XIII NRV : les PV se lisent paquet par paquet.
                     //
                     // Ce balayage tournait sur **tout le tampon**, et
@@ -285,6 +286,16 @@ impl StreamProcessor {
         offset
     }
 
+    /// Liste des tickets de contenu (opcode `0B 61`), envoyée à la sélection du personnage.
+    /// On en retient l'Odyle, pour l'afficher hors combat. Ajout XIII NRV (17/10/2026).
+    fn note_contents_tickets(&self, paquet: &[u8]) {
+        if let Some((courant, bonus)) = lire_odyle(paquet) {
+            if self.data_storage.note_ode(courant, bonus) {
+                tracing::info!("Odyle lu : {courant} (+{bonus})");
+            }
+        }
+    }
+
     fn unwrap_bundle(&mut self, payload: &[u8]) {
         // payload starts at FF FF
         // Format: FF FF (2) + decompressed_size (4 LE) + LZ4 compressed data
@@ -313,6 +324,7 @@ impl StreamProcessor {
                         self.pending_compact_skill_context = Some(ctx);
                     }
                     self.parse_perfect_packet(inner_packet);
+                    self.note_contents_tickets(inner_packet);
                     // Ajout XIII NRV : les PV se lisent **paquet par paquet**.
                     //
                     // Ce balayage tournait sur le bloc décompressé entier, donc
@@ -2401,6 +2413,57 @@ impl StreamProcessor {
 
 // ===== FREE FUNCTIONS =====
 
+/// Identifiant du ticket Odyle dans la liste des tickets de contenu. Relevé le 17/10/2026 :
+/// le même identifiant porte 75 (+90) pour un personnage et 215 (+30) pour un autre.
+pub const ID_TICKET_ODYLE: u32 = 60_000_001;
+
+/// Lit l'Odyle `(courant, bonus)` dans un paquet « liste des tickets » (opcode `0B 61`).
+///
+/// Une entrée de la liste : un octet d'indicateurs, l'identifiant du ticket sur 4 octets
+/// (petit-boutiste), 8 octets si le bit 0 est posé, 8 de plus si le bit 1 l'est, puis un
+/// nombre variable si le bit 2 l'est (le courant) et un autre si le bit 3 l'est (le bonus).
+/// Le reste du paquet est parcouru à la recherche de l'entrée de l'Odyle.
+pub fn lire_odyle(paquet: &[u8]) -> Option<(u32, u32)> {
+    let longueur = read_varint(paquet, 0);
+    if longueur.length <= 0 {
+        return None;
+    }
+    let debut = longueur.length as usize;
+    if paquet.get(debut..debut + 2)? != [0x0B, 0x61] {
+        return None;
+    }
+    let id = ID_TICKET_ODYLE.to_le_bytes();
+    let corps = &paquet[debut + 2..];
+    for i in 0..corps.len().saturating_sub(5) {
+        let drapeaux = corps[i];
+        if corps[i + 1..i + 5] != id || drapeaux & 0xF0 != 0 || drapeaux & 0x04 == 0 {
+            continue;
+        }
+        let mut k = i + 5;
+        if drapeaux & 0x01 != 0 {
+            k += 8;
+        }
+        if drapeaux & 0x02 != 0 {
+            k += 8;
+        }
+        let courant = read_varint(corps, k);
+        if courant.length <= 0 || courant.value < 0 {
+            continue;
+        }
+        k += courant.length as usize;
+        let mut bonus = 0;
+        if drapeaux & 0x08 != 0 {
+            let b = read_varint(corps, k);
+            if b.length <= 0 || b.value < 0 {
+                continue;
+            }
+            bonus = b.value as u32;
+        }
+        return Some((courant.value as u32, bonus));
+    }
+    None
+}
+
 pub fn read_varint(bytes: &[u8], offset: usize) -> VarIntResult {
     let mut value: i32 = 0;
     let mut shift = 0;
@@ -2869,6 +2932,84 @@ fn unicode_script(ch: char) -> UnicodeScript {
 
 #[cfg(test)]
 mod tests {
+    /// Paquet « liste des tickets de contenu » (`0B 61`) **reconstitué** d'après la structure
+    /// relevée le 17/10/2026 : aucun octet réel, seulement la forme. Le ticket Odyle
+    /// (60 000 001) porte le courant puis le bonus.
+    fn paquet_tickets(courant_et_bonus: &[u8], drapeaux: u8) -> Vec<u8> {
+        let mut corps = vec![0x0B, 0x61, 0x49, 0x04, 0x01, 0x00, 0x00, 0x00, 0x0E, 0x01, 0x03, 0x00, 0x00, 0x00];
+        corps.extend_from_slice(&[0x81, 0x96, 0x98, 0x00, 0x00, 0x82, 0x96, 0x98, 0x00, 0x00]);
+        corps.push(drapeaux);
+        corps.extend_from_slice(&[0x01, 0x87, 0x93, 0x03]);
+        corps.extend_from_slice(courant_et_bonus);
+        corps.extend_from_slice(&[0x04, 0x02, 0x87, 0x93, 0x03, 0x0E, 0x04, 0x03, 0x87, 0x93, 0x03, 0x0E]);
+        // Longueur annoncée = taille réelle + 3 (champ d'un octet) ou + 2 (deux octets).
+        let reel = corps.len() + 1;
+        if reel + 3 < 128 {
+            let mut v = vec![(reel + 3) as u8];
+            v.extend(corps);
+            v
+        } else {
+            let annonce = corps.len() + 2 + 2;
+            let mut v = vec![(annonce & 0x7F) as u8 | 0x80, (annonce >> 7) as u8];
+            v.extend(corps);
+            v
+        }
+    }
+
+    #[test]
+    fn lit_l_odyle_courant_et_bonus() {
+        use super::lire_odyle;
+        // 75 (+90) : un octet chacun.
+        assert_eq!(lire_odyle(&paquet_tickets(&[0x4B, 0x5A], 0x0C)), Some((75, 90)));
+        // 215 (+30) : le courant tient sur deux octets (nombre variable).
+        assert_eq!(lire_odyle(&paquet_tickets(&[0xD7, 0x01, 0x1E], 0x0C)), Some((215, 30)));
+        // Sans bonus : seul le courant est posé (indicateur 0x04).
+        assert_eq!(lire_odyle(&paquet_tickets(&[0x4B], 0x04)), Some((75, 0)));
+    }
+
+    #[test]
+    fn un_autre_paquet_ou_une_autre_entree_ne_donne_pas_d_odyle() {
+        use super::lire_odyle;
+        let mut autre_opcode = paquet_tickets(&[0x4B, 0x5A], 0x0C);
+        autre_opcode[1] = 0x0C; // opcode 0C 61 : pas la liste des tickets
+        assert_eq!(lire_odyle(&autre_opcode), None);
+        // Même opcode, mais un indicateur sans courant : on ne devine rien.
+        assert_eq!(lire_odyle(&paquet_tickets(&[0x5A], 0x08)), None);
+        assert_eq!(lire_odyle(&[0x05, 0x0B, 0x61]), None);
+    }
+
+    /// De bout en bout : la liste arrive dans un paquet groupé compressé, **après un gros
+    /// paquet** (champ de longueur sur deux octets). Avec l'ancienne règle de taille, le
+    /// gros paquet décalait la lecture d'un octet et la liste des tickets n'était jamais lue.
+    #[test]
+    fn la_liste_des_tickets_apres_un_gros_paquet_arrive_jusqu_au_stockage() {
+        use std::sync::Arc;
+        let gros: Vec<u8> = (0..200u32).map(|i| 0x10 + (i % 0x40) as u8).collect();
+        let annonce = gros.len() + 2 + 2;
+        let mut interieur = vec![(annonce & 0x7F) as u8 | 0x80, (annonce >> 7) as u8];
+        interieur.extend_from_slice(&gros);
+        interieur.extend(paquet_tickets(&[0xD7, 0x01, 0x1E], 0x0C));
+
+        let compresse = lz4_flex::block::compress(&interieur);
+        let mut groupe = vec![0xFF, 0xFF];
+        groupe.extend_from_slice(&(interieur.len() as u32).to_le_bytes());
+        groupe.extend(compresse);
+        // Groupé extérieur : champ de longueur sur deux octets, taille réelle = annonce - 2.
+        let annonce_ext = groupe.len() + 2 + 2;
+        let mut flux = vec![(annonce_ext & 0x7F) as u8 | 0x80, (annonce_ext >> 7) as u8];
+        flux.extend(groupe);
+
+        let stockage = Arc::new(super::DataStorage::new());
+        let mut proc_ = super::StreamProcessor::new(
+            stockage.clone(),
+            Arc::new(crate::i18n::lookup::SkillLookup::new()),
+            Arc::new(crate::i18n::lookup::NpcLookup::new()),
+        );
+        let lu = proc_.consume_stream(&flux);
+        assert_eq!(lu, flux.len(), "tout le groupé est consommé");
+        assert_eq!(stockage.ode(), Some((215, 30)));
+    }
+
     /// Paquet `02 97` d'un donjon, relevé le 16/10/2026 puis **anonymisé** : pseudos,
     /// identifiants de compte et Combat Power sont inventés, la structure est celle
     /// du jeu. Cinq membres, mais le monde du troisième dans son identifiant (0x0904)
