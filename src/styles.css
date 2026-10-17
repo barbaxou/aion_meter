@@ -1005,6 +1005,13 @@ body.mainPlayerDpsBold .meter .item .content .dps > p {
 /* Un large espace entre le CP et l'ode. */
 .meterFooter .statutVeille .statutOde {
   margin-left: 22px;
+  /* Centré sur la même ligne que le reste : l'icône, plus haute que le texte, tirait les
+     chiffres vers le haut avec l'alignement sur la ligne de base. */
+  align-items: center;
+}
+.meterFooter .statutVeille .statutOde b,
+.meterFooter .statutVeille .statutOde em {
+  line-height: 1;
 }
 .meterFooter .battleTime,
 .meterFooter .footerBtns {
