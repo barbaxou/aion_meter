@@ -16,6 +16,22 @@
     return bonus ? `${courant} (+${bonus})` : String(courant);
   }
 
+  // L'ode en deux morceaux, pour colorer le bonus à part : { courant: "230", bonus: "(+30)" }.
+  function partiesOde(ode) {
+    const courant = entier(ode?.courant);
+    if (courant === null) return { courant: "", bonus: "" };
+    const bonus = entier(ode?.bonus);
+    return { courant: String(courant), bonus: bonus ? `(+${bonus})` : "" };
+  }
+
+  // Au-delà de ce ping (ms), le retard se sent sur les compétences : la ligne passe au rouge.
+  const SEUIL_PING_MS = 100;
+  function etatPing(ms) {
+    const n = Number(ms);
+    if (!Number.isFinite(n) || n < 0) return null;
+    return n > SEUIL_PING_MS ? "ping-bad" : "ping-good";
+  }
+
   // Chemin de l'icône d'une classe (noms coréens, comme sur les lignes), ou null.
   function iconeClasse(job) {
     const nom = typeof job === "string" ? job.trim() : "";
@@ -50,7 +66,7 @@
     return { secondaire: n >= 2, tertiaire: n >= 3 };
   }
 
-  const sortie = { texteOde, texteGs, texteCp, iconeClasse, nombreDeValeurs, valeursVisibles };
+  const sortie = { texteOde, partiesOde, etatPing, SEUIL_PING_MS, texteGs, texteCp, iconeClasse, nombreDeValeurs, valeursVisibles };
   if (racine && typeof module !== "undefined" && module.exports) {
     module.exports = sortie;
     return;

@@ -3986,6 +3986,32 @@ class DpsApp {
 
   // Ajout XIII NRV : la ligne du bas est la ligne d'infos du joueur, toujours visible :
   // icône de classe, pseudo, GS, CP, ode (l'Odyle), puis le ping et le verrou.
+  _classesRetenues() {
+    try {
+      const brut = window.localStorage?.getItem("dpsMeter.classesParPseudo");
+      const o = brut ? JSON.parse(brut) : {};
+      return o && typeof o === "object" ? o : {};
+    } catch {
+      return {};
+    }
+  }
+
+  _classeRetenue(pseudo) {
+    return this._classesRetenues()[pseudo] || null;
+  }
+
+  _retenirClasse(pseudo, job) {
+    if (!pseudo || !job) return;
+    const o = this._classesRetenues();
+    if (o[pseudo] === job) return;
+    o[pseudo] = job;
+    try {
+      window.localStorage?.setItem("dpsMeter.classesParPseudo", JSON.stringify(o));
+    } catch {
+      /* stockage indisponible : la classe sera relue à la prochaine compétence */
+    }
+  }
+
   majStatutVeille() {
     const zone = document.querySelector(".statutVeille");
     if (!zone) return;
@@ -4015,7 +4041,14 @@ class DpsApp {
       this._dernierPseudo = pseudo;
       this._dernierJob = null;
     }
-    if (info?.job) this._dernierJob = info.job;
+    // La classe ne se lit qu'une fois une compétence vue : on la retient par pseudo, pour
+    // l'afficher dès la connexion suivante.
+    if (info?.job) {
+      this._dernierJob = info.job;
+      this._retenirClasse(pseudo, info.job);
+    } else if (!this._dernierJob && pseudo) {
+      this._dernierJob = this._classeRetenue(pseudo);
+    }
     const icone = SV?.iconeClasse(this._dernierJob);
     const img = zone.querySelector(".statutClasse");
     if (img) {
@@ -4032,7 +4065,17 @@ class DpsApp {
     };
     remplir(".statutGs", SV?.texteGs(info?.gs) ?? "");
     remplir(".statutCp", SV?.texteCp(info?.cp) ?? "");
-    remplir(".statutOde", SV?.texteOde(info?.ode) ?? "");
+    {
+      const el = zone.querySelector(".statutOde");
+      const parties = SV?.partiesOde(info?.ode) ?? { courant: "", bonus: "" };
+      if (el) {
+        const nombre = el.querySelector("b");
+        const bonus = el.querySelector("em");
+        if (nombre && nombre.textContent !== parties.courant) nombre.textContent = parties.courant;
+        if (bonus && bonus.textContent !== parties.bonus) bonus.textContent = parties.bonus;
+        el.style.display = parties.courant ? "" : "none";
+      }
+    }
 
     // Le verrou a bougé avec la ligne : le serveur doit savoir où il est pour le laisser cliquable.
     this._sendLockBtnRect?.();
@@ -4647,9 +4690,8 @@ class DpsApp {
     else this.pingEl.textContent = `${ms}ms`;
     this.pingEl.classList.add("isVisible");
     this.pingEl.classList.remove("ping-good", "ping-warn", "ping-high", "ping-bad");
-    this.pingEl.classList.add(
-      ms < 100 ? "ping-good" : ms < 200 ? "ping-warn" : ms < 225 ? "ping-high" : "ping-bad"
-    );
+    // Ajout XIII NRV : vert, puis rouge au-delà de 100 ms (seuil dans statutVeille.js).
+    this.pingEl.classList.add(window.StatutVeille?.etatPing(ms) ?? (ms <= 100 ? "ping-good" : "ping-bad"));
   }
 
   updateConnectionStatusUi() {

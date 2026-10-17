@@ -977,13 +977,22 @@ body.mainPlayerDpsBold .meter .item .content .dps > p {
 }
 .meterFooter .statutVeille .statutChiffre i {
   font-style: normal;
-  font-size: 9px;
+  font-size: 11.5px;
   letter-spacing: 0.04em;
-  color: var(--hud-sub);
+  color: #e8c77a;
 }
 .meterFooter .statutVeille .statutChiffre b {
   font-weight: inherit;
-  color: rgba(255, 255, 255, 0.9);
+  color: #ffffff;
+}
+/* Le bonus de l'ode, d'une autre couleur que le chiffre qu'il accompagne. */
+.meterFooter .statutVeille .statutChiffre em {
+  font-style: normal;
+  color: #5fcaff;
+}
+/* Un large espace entre le CP et l'ode. */
+.meterFooter .statutVeille .statutOde {
+  margin-left: 22px;
 }
 .meterFooter .battleTime,
 .meterFooter .footerBtns {
@@ -2728,7 +2737,7 @@ body.legacyUi .meter .item .content .name.isSupporter,
   flex-shrink: 0;
 }
 .pingDisplay.ping-good {
-  color: #5fcaff;
+  color: #5fd38d;
 }
 .pingDisplay.ping-warn {
   color: #f2b94f;
@@ -2737,7 +2746,7 @@ body.legacyUi .meter .item .content .name.isSupporter,
   color: #f27a3a;
 }
 .pingDisplay.ping-bad {
-  color: #e06b6b;
+  color: #ff5c5c;
 }
 
 .detailsPanel {

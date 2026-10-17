@@ -5,7 +5,7 @@ import fs from "node:fs";
 
 const contexte = { module: { exports: {} } };
 vm.runInNewContext(fs.readFileSync(new URL("./statutVeille.js", import.meta.url), "utf8"), contexte);
-const { texteOde, texteGs, texteCp, iconeClasse, nombreDeValeurs, valeursVisibles } = contexte.module.exports;
+const { texteOde, partiesOde, etatPing, texteGs, texteCp, iconeClasse, nombreDeValeurs, valeursVisibles } = contexte.module.exports;
 
 // L'ode : le courant, puis le bonus entre parenthèses.
 assert.equal(texteOde({ courant: 75, bonus: 90 }), "75 (+90)");
@@ -39,5 +39,19 @@ assert.equal(texteCp(120300), "120.3K");
 assert.equal(texteCp(950), "950");
 assert.equal(texteCp(1_250_000), "1.25M");
 assert.equal(texteCp(undefined), "");
+
+// L'ode en deux morceaux : le bonus se colore à part.
+const po = partiesOde({ courant: 230, bonus: 30 });
+assert.equal(po.courant, "230");
+assert.equal(po.bonus, "(+30)");
+assert.equal(partiesOde({ courant: 75, bonus: 0 }).bonus, "");
+assert.equal(partiesOde(null).courant, "");
+
+// Le ping : vert jusqu'à 100 ms, rouge au-delà ; rien si inconnu.
+assert.equal(etatPing(24), "ping-good");
+assert.equal(etatPing(100), "ping-good");
+assert.equal(etatPing(101), "ping-bad");
+assert.equal(etatPing(-1), null);
+assert.equal(etatPing(undefined), null);
 
 console.log("statutVeille : ok");
