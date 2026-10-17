@@ -518,6 +518,12 @@ impl DataStorage {
     /// world is kept. Returns whether the local identity changed.
     pub fn note_loot_owner(&self, owner_id: i32, name: &str) -> bool {
         let mut inner = self.inner.write();
+        // Ajout XIII NRV (17/10/2026) : en groupe, le butin peut revenir à n'importe quel
+        // membre ; il ne dit rien de qui est le joueur local. Mesuré : le journal nommait
+        // tour à tour cinq joueurs « local player » et le mode TARGET suivait le mauvais.
+        if inner.party_members.len() >= 2 {
+            return false;
+        }
         let loot = &mut inner.loot_identity;
         if loot.conflicted {
             return false;
@@ -1888,6 +1894,22 @@ mod tests {
             s.get_combat_snapshot().get(&900).is_none(),
             "la cible précédente doit avoir été effacée au coup suivant"
         );
+    }
+
+    /// 17/10/2026 : en groupe, le butin peut revenir à n'importe quel membre. Le journal
+    /// du meter montrait « local player 'Nyre' », puis 'Vakamitshi', 'Raijin'… : le mode
+    /// TARGET suivait alors un autre joueur que soi.
+    #[test]
+    fn en_groupe_le_proprietaire_du_butin_n_est_pas_le_joueur_local() {
+        let s = DataStorage::new();
+        let membres: Vec<(String, PartyMember)> = ["Moi", "JoueurA", "JoueurB"]
+            .iter()
+            .enumerate()
+            .map(|(i, n)| (n.to_string(), PartyMember { slot: i as u8, level: 45, ..Default::default() }))
+            .collect();
+        s.set_party_roster(membres, true);
+        assert!(!s.note_loot_owner(9993, "JoueurA"), "le butin d'un membre ne dit pas qui je suis");
+        assert_eq!(s.local_player_id(), None);
     }
 
     /// Un effectif complet de cinq membres n'est pas un groupe fini.
