@@ -306,6 +306,12 @@ pub fn rafraichir_depuis_le_groupe() {
 
 static ETAT: OnceLock<Mutex<Etat>> = OnceLock::new();
 
+/// Nom du dernier personnage lu (relu du disque au démarrage), s'il y en a un.
+pub fn nom_connu() -> Option<String> {
+    let nom = etat().lock().nom.clone();
+    nom.filter(|n| !n.trim().is_empty())
+}
+
 fn etat() -> &'static Mutex<Etat> {
     ETAT.get_or_init(|| Mutex::new(Etat::default()))
 }

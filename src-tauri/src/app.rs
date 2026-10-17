@@ -2293,6 +2293,8 @@ pub fn run() {
                     etat.app_data_dir.join("fiche.json"),
                 );
                 crate::xiiinrv::collecte::charger();
+                // Garde-fou d'identité : le dernier personnage lu, avant tout butin croisé.
+                data_storage.set_nom_probable(crate::xiiinrv::collecte::nom_connu());
                 // Fonds de carte : téléchargés depuis le site, jamais embarqués.
                 crate::xiiinrv::fonds::demarrer(etat.app_data_dir.join("fonds"));
                 // Objets vus en jouant (positions) : fichier local, jamais envoyé.

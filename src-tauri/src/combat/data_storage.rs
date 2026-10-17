@@ -375,6 +375,8 @@ struct Inner {
     loot_identity: LootIdentity,
     /// Odyle (« ode ») : nombre actuel et bonus, lus dans la liste des tickets de contenu.
     ode: Option<(u32, u32)>,
+    /// Dernier personnage lu par le meter (conservé sur disque) : sert de garde-fou à `note_loot_owner`.
+    nom_probable: Option<String>,
 }
 
 #[derive(Default)]
@@ -435,6 +437,7 @@ impl DataStorage {
                 local_identity_from_game: false,
                 loot_identity: LootIdentity::default(),
                 ode: None,
+                nom_probable: None,
             }),
             damage_generation: AtomicI64::new(0),
             party_generation: AtomicI64::new(0),
@@ -505,6 +508,10 @@ impl DataStorage {
             || inner.local_character_name != name
             || inner.loot_identity.applied;
         inner.loot_identity.applied = false;
+        // Le jeu a parlé : c'est désormais le personnage attendu pour les butins.
+        if let Some(n) = name.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
+            inner.nom_probable = Some(n.to_string());
+        }
         set_game_identity(&mut inner, id, name);
         changed
     }
@@ -525,6 +532,12 @@ impl DataStorage {
         // membre ; il ne dit rien de qui est le joueur local. Mesuré : le journal nommait
         // tour à tour cinq joueurs « local player » et le mode TARGET suivait le mauvais.
         if inner.party_members.len() >= 2 {
+            return false;
+        }
+        // Ajout XIII NRV (17/10/2026) : meter lancé en cours de partie, le butin d'un joueur
+        // croisé désignait un faux joueur local. Le dernier personnage lu fait foi : un butin
+        // qui le nomme confirme, un butin qui nomme un autre est ignoré.
+        if inner.nom_probable.as_deref().is_some_and(|probable| probable != name.trim()) {
             return false;
         }
         let loot = &mut inner.loot_identity;
@@ -570,6 +583,12 @@ impl DataStorage {
         let inner = self.inner.read();
         let id = inner.local_player_id? as i32;
         inner.actor_jobs.get(&id).map(|j| j.class_name())
+    }
+
+    /// Nom du dernier personnage lu (fiche conservée sur disque). Tant qu'il est connu, un
+    /// butin qui nomme un autre joueur ne peut pas servir à vous identifier.
+    pub fn set_nom_probable(&self, nom: Option<String>) {
+        self.inner.write().nom_probable = nom.map(|n| n.trim().to_string()).filter(|n| !n.is_empty());
     }
 
     /// Retient l'Odyle lu dans la liste des tickets : `courant` et `bonus` (le « 75 (+90) »
@@ -1945,6 +1964,20 @@ mod tests {
         assert_eq!(s.local_job(), None, "joueur connu, classe pas encore");
         s.inner.write().actor_jobs.insert(1, crate::entity::job_class::JobClass::Elementalist);
         assert_eq!(s.local_job(), Some("정령성"));
+    }
+
+    /// 17/10/2026 : meter lancé en cours de partie, sans fiche du jeu à l'écran, le journal
+    /// nommait « local player » un joueur croisé (Obsile, Nyre…) à chaque butin. Le dernier
+    /// personnage lu (conservé sur disque) sert de garde-fou : un butin qui nomme un autre
+    /// joueur ne désigne pas le joueur local, un butin qui le nomme le confirme.
+    #[test]
+    fn le_dernier_personnage_lu_empeche_le_butin_d_un_autre_de_vous_designer() {
+        let s = DataStorage::new();
+        s.set_nom_probable(Some("Moi".into()));
+        assert!(!s.note_loot_owner(11388, "Passant"), "butin d'un autre joueur : ignoré");
+        assert_eq!(s.local_player_id(), None);
+        assert!(s.note_loot_owner(77, "Moi"), "butin du personnage attendu : confirmé");
+        assert_eq!(s.local_player_id(), Some(77));
     }
 
     /// Un effectif complet de cinq membres n'est pas un groupe fini.
