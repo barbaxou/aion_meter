@@ -527,6 +527,9 @@ impl DpsCalculator {
     /// Everything that has to happen to a row set before it goes on screen,
     /// in one place so a new return path cannot quietly skip half of it.
     fn finalize_rows(&self, dps_data: &mut DpsData) {
+        let (prets, total) = self.data_storage.salon_prets().map_or((-1, -1), |(p, t)| (p as i32, t as i32));
+        dps_data.salon_prets = prets;
+        dps_data.salon_total = total;
         self.add_party_rows(dps_data);
         self.mark_supporters(dps_data);
     }
@@ -1987,6 +1990,26 @@ mod tests_temps_forts {
         let ami = dps.map.values().find(|d| d.nickname == "Ami").expect("l'ami est listé");
         assert_eq!(ami.amount, 500.0);
         assert!(dps.map.values().all(|d| d.nickname != "Etranger" || d.amount == 0.0));
+    }
+
+    /// 17/10/2026 : « Salon · N/M prêts » d'Abyss. L'état du salon part avec chaque instantané,
+    /// et un changement de « prêt » ne doit pas être masqué par l'instantané en cache.
+    #[test]
+    fn l_instantane_porte_l_etat_du_salon() {
+        let (stockage, mut calc) = calculateur_cible();
+        assert_eq!(calc.get_dps().salon_prets, -1, "pas de salon annoncé");
+
+        stockage.note_salon_membre(0x08ff, "Moi", 3);
+        stockage.note_salon_membre(0x0904, "Ami", 3);
+        let dps = calc.get_dps();
+        assert_eq!((dps.salon_prets, dps.salon_total), (0, 3));
+
+        stockage.note_salon_pret(0x0904, true);
+        let dps = calc.get_dps();
+        assert_eq!((dps.salon_prets, dps.salon_total), (1, 3), "le « prêt » n'est pas masqué par le cache");
+
+        stockage.vider_salon();
+        assert_eq!(calc.get_dps().salon_prets, -1, "salon fermé");
     }
 
     /// Le serveur rejoue le même roster des dizaines de fois par seconde : ce n'est pas

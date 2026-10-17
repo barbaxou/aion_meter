@@ -345,6 +345,7 @@
   "target": {
     "all": "Toutes les cibles",
     "identifying": "Identification en cours...",
+    "salon": "Salon · {prets}/{total} prêts",
     "train": "Mannequin d'entraînement",
     "boss": "Cibles boss"
   },

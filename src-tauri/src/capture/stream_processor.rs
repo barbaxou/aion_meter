@@ -432,6 +432,7 @@ impl StreamProcessor {
             || self.parsing_nickname(packet);
         let parsed_hp = self.parse_hp_mp_update_packet(packet);
         self.parse_death_packet(packet);
+        self.parse_salon_packet(packet);
         self.parse_zone_change_packet(packet);
 
         if !parsed_damage && !parsed_name && !parsed_summon && !parsed_ownership && !parsed_hp {
@@ -439,6 +440,54 @@ impl StreamProcessor {
         }
 
         parsed_damage || parsed_name
+    }
+
+    // ===== SALON DE DONJON (0B 97, 16 97, 1D 97) =====
+
+    /// Ajout XIII NRV : le salon d'attente. `0B 97` : un membre rejoint
+    /// (`0C <taille> <id 3 octets> 00 00 00 <clé 2 octets> <longueur> <pseudo> …`). `16 97` :
+    /// un membre change d'état (`<id 3 octets> 00 00 00 <clé 2 octets> <drapeau>`, 1 = prêt).
+    /// `1D 97` : salon vidé. Relevés le 17/10/2026 dans le journal d'Abyss
+    /// (`DecodeDungeonRoomAddMember`, `…Ready`) et retrouvés octet pour octet dans nos
+    /// captures. L'identifiant d'arrivée du joueur local n'est pas celui de ses « prêt » :
+    /// seule la clé à deux octets relie les deux.
+    fn parse_salon_packet(&self, packet: &[u8]) {
+        let length_info = read_varint(packet, 0);
+        if length_info.length < 0 {
+            return;
+        }
+        let o = length_info.length as usize;
+        if o + 2 >= packet.len() || packet[o + 1] != 0x97 {
+            return;
+        }
+        // L'index du premier `00 00 00` à partir de `depuis` (le séparateur après l'identifiant).
+        let separateur = |depuis: usize| {
+            (depuis..packet.len().saturating_sub(2).min(depuis + 8))
+                .find(|&i| packet[i] == 0 && packet[i + 1] == 0 && packet[i + 2] == 0)
+        };
+        match packet[o] {
+            0x0b => {
+                let Some(&taille) = packet.get(o + 3) else { return };
+                let Some(sep) = separateur(o + 5) else { return };
+                let (Some(&k1), Some(&k2), Some(&longueur)) =
+                    (packet.get(sep + 3), packet.get(sep + 4), packet.get(sep + 5)) else { return };
+                let debut = sep + 6;
+                let fin = debut + longueur as usize;
+                if !(1..=36).contains(&(longueur as usize)) || fin > packet.len() {
+                    return;
+                }
+                let Some(pseudo) = exact_name(&packet[debut..fin]) else { return };
+                self.data_storage.note_salon_membre(u16::from_le_bytes([k1, k2]), &pseudo, taille as u32);
+            }
+            0x16 => {
+                let Some(sep) = separateur(o + 3) else { return };
+                let (Some(&k1), Some(&k2), Some(&drapeau)) =
+                    (packet.get(sep + 3), packet.get(sep + 4), packet.get(sep + 5)) else { return };
+                self.data_storage.note_salon_pret(u16::from_le_bytes([k1, k2]), drapeau != 0);
+            }
+            0x1d => self.data_storage.vider_salon(),
+            _ => {}
+        }
     }
 
     // ===== ZONE CHANGE (23 36) =====
@@ -3229,6 +3278,62 @@ mod tests {
         // Une victime inconnue (un monstre) ne s'inscrit pas.
         processor.scan_for_embedded_04_8d(&mort(&[0x9f, 0x8d, 0x06]));
         assert_eq!(stockage.morts(0x9f | (0x0d << 7) | (6 << 14)), 0);
+    }
+
+    /// Les octets viennent de la capture réelle du 17/10/2026 (identiques à ceux qu'Abyss lit) ;
+    /// les pseudos sont remplacés par des noms fictifs de même longueur.
+    fn paquet_salon(opcode: u8, corps: &[u8]) -> Vec<u8> {
+        [&[0x34u8, opcode, 0x97][..], corps].concat()
+    }
+
+    fn arrivee(n: u8, id: [u8; 3], cle: [u8; 2], nom: &str) -> Vec<u8> {
+        let mut corps = vec![0x0c, n];
+        corps.extend(id);
+        corps.extend([0, 0, 0]);
+        corps.extend(cle);
+        corps.push(nom.len() as u8);
+        corps.extend(nom.as_bytes());
+        corps.extend([0x0f, 0, 0, 0, 0x2d, 0, 0, 0, 0xfb, 0x09, 0, 0, 0x01, 0xff, 0x08]);
+        paquet_salon(0x0b, &corps)
+    }
+
+    fn pret(id: [u8; 3], cle: [u8; 2], drapeau: u8) -> Vec<u8> {
+        let mut corps = id.to_vec();
+        corps.extend([0, 0, 0]);
+        corps.extend(cle);
+        corps.push(drapeau);
+        [&[0x0fu8, 0x16, 0x97][..], &corps].concat()
+    }
+
+    /// 17/10/2026 : le salon d'Abyss affiche « 1/4 prêts » ; nous n'en lisions rien. Les
+    /// arrivées sont `0B 97`, les « prêt » `16 97` (même clé à deux octets), `1D 97` vide le salon.
+    #[test]
+    fn le_salon_compte_les_membres_prets() {
+        let stockage = Arc::new(DataStorage::new());
+        let mut processor = StreamProcessor::new(
+            stockage.clone(),
+            Arc::new(SkillLookup::new()),
+            Arc::new(NpcLookup::new()),
+        );
+        assert_eq!(stockage.salon_prets(), None, "aucun salon annoncé");
+
+        // Le joueur local arrive : son identifiant d'arrivée n'est pas celui de ses « prêt »,
+        // c'est la clé à deux octets qui les relie.
+        processor.parse_perfect_packet(&arrivee(3, [0x12, 0x86, 0x03], [0xff, 0x08], "Moi"));
+        processor.parse_perfect_packet(&arrivee(4, [0xdb, 0xa6, 0x02], [0x04, 0x09], "Ami1"));
+        processor.parse_perfect_packet(&arrivee(5, [0xd8, 0xb7, 0x02], [0x02, 0x09], "Ami2"));
+        assert_eq!(stockage.salon_prets(), Some((0, 5)));
+
+        processor.parse_perfect_packet(&pret([0xd8, 0xb7, 0x02], [0x02, 0x09], 1));
+        assert_eq!(stockage.salon_prets(), Some((1, 5)));
+        processor.parse_perfect_packet(&pret([0xa7, 0x6c, 0x03], [0xff, 0x08], 1));
+        assert_eq!(stockage.salon_prets(), Some((2, 5)), "le local se met prêt (autre identifiant)");
+
+        processor.parse_perfect_packet(&pret([0xd8, 0xb7, 0x02], [0x02, 0x09], 0));
+        assert_eq!(stockage.salon_prets(), Some((1, 5)), "il se met pas prêt");
+
+        processor.parse_perfect_packet(&[0x08, 0x1d, 0x97, 0x00, 0x00]);
+        assert_eq!(stockage.salon_prets(), None, "salon vidé");
     }
 
     /// A Sorcerer on Ventus (server 1305) killing a mob, from a player's log

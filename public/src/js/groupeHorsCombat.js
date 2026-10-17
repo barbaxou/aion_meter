@@ -28,7 +28,18 @@
     return sansDegats(nouvelles) ? nouvelles : null;
   }
 
-  const sortie = { sansDegats, remplacerParLeGroupe };
+  // Titre du salon d'attente (ajout XIII NRV, 17/10/2026) : « Salon · Donjon · 3/5 prêts »
+  // comme Abyss. `null` quand aucun salon n'est annoncé (prets ou total négatifs) ou quand
+  // un combat a une cible. `modele` porte la langue : `{prets}` et `{total}`.
+  function libelleSalon({ prets, total, donjon = "", modele = "Salon · {prets}/{total} ready", cible = false } = {}) {
+    const p = Number(prets);
+    const t = Number(total);
+    if (cible || !Number.isFinite(p) || !Number.isFinite(t) || p < 0 || t <= 0) return null;
+    const compte = String(modele).replace("{prets}", String(p)).replace("{total}", String(t));
+    return donjon ? compte.replace(/^([^·]*·)\s*/, `$1 ${donjon} · `) : compte;
+  }
+
+  const sortie = { sansDegats, remplacerParLeGroupe, libelleSalon };
   if (racine && typeof module !== "undefined" && module.exports) {
     module.exports = sortie;
     return;

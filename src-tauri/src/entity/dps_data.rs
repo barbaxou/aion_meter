@@ -51,6 +51,10 @@ pub struct DpsData {
     /// que `hp_coverage` compare à nos chiffres, et la mélanger à nos propres
     /// coups ferait dire 100 % au contrôle quoi qu'il arrive.
     pub smoothed_current_hp: i64,
+    /// Ajout XIII NRV : salon de donjon, membres prêts et membres annoncés. `-1` quand aucun
+    /// salon n'est annoncé (voir `DataStorage::salon_prets`).
+    pub salon_prets: i32,
+    pub salon_total: i32,
 }
 
 impl DpsData {
@@ -68,6 +72,8 @@ impl DpsData {
             dungeon_id: 0,
             hp_coverage: None,
             smoothed_current_hp: -1,
+            salon_prets: -1,
+            salon_total: -1,
         }
     }
 }

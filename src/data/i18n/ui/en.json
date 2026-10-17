@@ -345,6 +345,7 @@
   "target": {
     "all": "All Targets",
     "identifying": "Identifying you...",
+    "salon": "Salon · {prets}/{total} ready",
     "train": "Training Scarecrow",
     "boss": "Boss Targets"
   },

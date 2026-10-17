@@ -5,7 +5,7 @@ import fs from "node:fs";
 
 const contexte = { module: { exports: {} } };
 vm.runInNewContext(fs.readFileSync(new URL("./groupeHorsCombat.js", import.meta.url), "utf8"), contexte);
-const { remplacerParLeGroupe } = contexte.module.exports;
+const { remplacerParLeGroupe, libelleSalon } = contexte.module.exports;
 
 const ligne = (name, totalDamage = 0, dps = 0) => ({ name, totalDamage, dps });
 const ancienGroupe = [ligne("JoueurA"), ligne("JoueurB"), ligne("JoueurC")];
@@ -26,4 +26,13 @@ assert.equal(remplacerParLeGroupe([], ancienGroupe), null);
 assert.equal(remplacerParLeGroupe(nouveauGroupe, []), null);
 assert.equal(remplacerParLeGroupe(nouveauGroupe, null), null);
 
+console.log("groupeHorsCombat : ok");
+
+// 17/10/2026 : titre du salon d'attente, comme Abyss (« Salon · Donjon · 1/4 prêts »).
+const fr = "Salon · {prets}/{total} prêts";
+assert.equal(libelleSalon({ prets: 1, total: 4, modele: fr }), "Salon · 1/4 prêts");
+assert.equal(libelleSalon({ prets: 1, total: 4, donjon: "Base de recherche", modele: fr }), "Salon · Base de recherche · 1/4 prêts");
+assert.equal(libelleSalon({ prets: 0, total: 3 }), "Salon · 0/3 ready", "modèle par défaut en anglais");
+assert.equal(libelleSalon({ prets: -1, total: -1, modele: fr }), null, "aucun salon annoncé");
+assert.equal(libelleSalon({ prets: 2, total: 4, modele: fr, cible: true }), null, "un combat en cours prend le titre");
 console.log("groupeHorsCombat : ok");

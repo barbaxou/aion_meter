@@ -335,6 +335,11 @@ struct Inner {
     heures_des_morts: HashMap<i32, Vec<i64>>,
     /// Dernière mort lue dans le paquet de mort, par entité (voir `noter_mort_par_paquet`).
     derniere_mort_paquet: HashMap<i32, i64>,
+    /// Salon de donjon : les membres annoncés (clé à deux octets -> pseudo), ceux qui se sont
+    /// mis prêts, et la taille annoncée du salon. Voir `note_salon_membre`.
+    salon_membres: HashMap<u16, String>,
+    salon_prets: HashSet<u16>,
+    salon_taille: u32,
     /// Les coups reçus par chaque joueur : (heure, dégâts). Rangés par heure et non
     /// sur une cible : le compteur de `ActorData` s'ajoutait sur la première cible
     /// où le joueur figurait, et cumulait donc tous les boss d'un donjon (17/10/2026).
@@ -429,6 +434,9 @@ impl DataStorage {
                 morts_par_entite: HashMap::new(),
                 heures_des_morts: HashMap::new(),
                 derniere_mort_paquet: HashMap::new(),
+                salon_membres: HashMap::new(),
+                salon_prets: HashSet::new(),
+                salon_taille: 0,
                 coups_recus: HashMap::new(),
                 soins_donnes: HashMap::new(),
                 pv_precedents: HashMap::new(),
@@ -461,6 +469,8 @@ impl DataStorage {
     /// (debounce), so the meter starts clean on entering a dungeon/instance
     /// without ever wiping an in-progress fight. Returns true if it reset.
     pub fn note_zone_change(&self) -> bool {
+        // Le salon ne survit pas à l'entrée en donjon : ses « prêt » n'ont plus de sens.
+        self.vider_salon();
         let now = now_ms();
         if now - self.last_damage_ms.load(Ordering::Relaxed) < ZONE_RESET_LULL_MS {
             return false; // mid-combat teleport — ignore
@@ -877,6 +887,47 @@ impl DataStorage {
             // en trace pour voir s'il manquait une mort.
             tracing::debug!("PV à zéro sans lecture précédente : entité {entity_id}, non comptée");
         }
+    }
+
+    /// Salon de donjon (paquets `0B 97`, `16 97`, `1D 97`, relevés le 17/10/2026 dans le journal
+    /// d'Abyss puis retrouvés octet pour octet dans nos captures). Un membre rejoint : sa clé
+    /// à deux octets le suit ensuite dans chaque événement « prêt ». `taille` est le nombre
+    /// de membres annoncé par le paquet.
+    pub fn note_salon_membre(&self, cle: u16, pseudo: &str, taille: u32) {
+        let mut inner = self.inner.write();
+        inner.salon_membres.insert(cle, pseudo.to_string());
+        inner.salon_taille = inner.salon_taille.max(taille);
+        self.party_generation.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn note_salon_pret(&self, cle: u16, pret: bool) {
+        let mut inner = self.inner.write();
+        if pret {
+            inner.salon_prets.insert(cle);
+        } else {
+            inner.salon_prets.remove(&cle);
+        }
+        self.party_generation.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Le salon est vidé ou fermé (`1D 97`), ou le donjon commence.
+    pub fn vider_salon(&self) {
+        let mut inner = self.inner.write();
+        inner.salon_membres.clear();
+        inner.salon_prets.clear();
+        inner.salon_taille = 0;
+        self.party_generation.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// « N prêts sur M » du salon, ou `None` quand aucun salon n'est annoncé.
+    pub fn salon_prets(&self) -> Option<(u32, u32)> {
+        let inner = self.inner.read();
+        if inner.salon_membres.is_empty() {
+            return None;
+        }
+        let prets = inner.salon_membres.keys().filter(|k| inner.salon_prets.contains(k)).count() as u32;
+        let total = inner.salon_taille.max(inner.salon_membres.len() as u32);
+        Some((prets, total))
     }
 
     /// Une mort lue dans le paquet de mort (`04 8D` : victime, compétence, tueur), comme

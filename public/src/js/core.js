@@ -988,6 +988,8 @@ class DpsApp {
       smoothedCurrentHp,
       hpCoverage,
       dungeonId,
+      salonPrets,
+      salonTotal,
     } = this.buildRowsFromPayload(raw);
     if (this.refreshPending) {
       const pendingAgeMs = Math.max(0, now - (Number(this.refreshPendingStartedAt) || 0));
@@ -1115,7 +1117,15 @@ class DpsApp {
     }
     // render
     this.lastDungeonId = dungeonId;
-    const nextTargetLabel = this.getTargetLabel({ targetId, targetName, targetMode, dungeonId });
+    // Ajout XIII NRV : au salon d'attente, le titre dit combien de membres sont prêts.
+    const titreSalon = window.GroupeHorsCombat?.libelleSalon({
+      prets: salonPrets,
+      total: salonTotal,
+      donjon: Number(dungeonId) > 0 ? (this.i18n?.getDungeonLabel?.(Number(dungeonId)) ?? "") : "",
+      modele: this.i18n?.t("target.salon", "Salon · {prets}/{total} ready"),
+      cible: Number(targetId) > 0 || !!targetName,
+    });
+    const nextTargetLabel = titreSalon ?? this.getTargetLabel({ targetId, targetName, targetMode, dungeonId });
     if (this.elBossName) {
       if (this.elBossName.textContent !== nextTargetLabel) {
         this.elBossName.textContent = nextTargetLabel;
@@ -1222,6 +1232,8 @@ class DpsApp {
       smoothedCurrentHp,
       hpCoverage,
       dungeonId,
+      salonPrets: Math.trunc(Number(payload?.salonPrets)),
+      salonTotal: Math.trunc(Number(payload?.salonTotal)),
     };
   }
 
