@@ -320,6 +320,12 @@ struct Inner {
     morts_par_entite: HashMap<i32, u32>,
     /// Les heures (ms, horloge de capture) de ces morts, pour les compter par combat.
     heures_des_morts: HashMap<i32, Vec<i64>>,
+    /// Les coups reçus par chaque joueur : (heure, dégâts). Rangés par heure et non
+    /// sur une cible : le compteur de `ActorData` s'ajoutait sur la première cible
+    /// où le joueur figurait, et cumulait donc tous les boss d'un donjon (17/10/2026).
+    coups_recus: HashMap<i32, Vec<(i64, i64)>>,
+    /// Les soins donnés aux alliés par chaque joueur : (heure, montant). Même raison.
+    soins_donnes: HashMap<i32, Vec<(i64, i64)>>,
     /// La dernière lecture de PV de chaque entité, pour repérer la chute à zéro.
     pv_precedents: HashMap<i32, i32>,
     /// Les entités dont on a vu les PV tomber à zéro une fois, et qui attendent
@@ -401,6 +407,8 @@ impl DataStorage {
                 dead_entity_ids: HashSet::new(),
                 morts_par_entite: HashMap::new(),
                 heures_des_morts: HashMap::new(),
+                coups_recus: HashMap::new(),
+                soins_donnes: HashMap::new(),
                 pv_precedents: HashMap::new(),
                 zero_en_attente: HashSet::new(),
                 boss_entity_ids: HashSet::new(),
@@ -565,6 +573,8 @@ impl DataStorage {
                 let mut inner = self.inner.write();
                 inner.morts_par_entite.clear();
                 inner.heures_des_morts.clear();
+                inner.coups_recus.clear();
+                inner.soins_donnes.clear();
             }
             self.combat_reset_requested.store(true, Ordering::Relaxed);
             tracing::info!("Remise à zéro armée appliquée : nouvelle cible engagée");
@@ -632,6 +642,7 @@ impl DataStorage {
                     pdp.is_dot(), pdp.damage_type(), pdp.specials(),
                     pdp.multi_hit_damage(), pdp.multi_hit_count()
                 );
+                inner.coups_recus.entry(resolved_target).or_default().push((pdp.timestamp(), dmg));
                 for target_data in inner.target_combat.values_mut() {
                     if let Some(actor_data) = target_data.actors.get_mut(&resolved_target) {
                         actor_data.damage_received += dmg;
@@ -661,6 +672,7 @@ impl DataStorage {
         if is_friendly_action(&inner, actor_id, target_id) {
             let heal_amount = pdp.total_damage();
             if heal_amount > 0 {
+                inner.soins_donnes.entry(actor_id).or_default().push((pdp.timestamp(), heal_amount as i64));
                 // Record party heal on the actor's data in all targets they appear in
                 for target_data in inner.target_combat.values_mut() {
                     if let Some(actor_data) = target_data.actors.get_mut(&actor_id) {
@@ -798,6 +810,22 @@ impl DataStorage {
     pub fn morts_dans(&self, entity_id: i32, debut: i64, fin: i64) -> u32 {
         self.inner.read().heures_des_morts.get(&entity_id)
             .map(|v| v.iter().filter(|&&t| t >= debut && t <= fin).count() as u32)
+            .unwrap_or(0)
+    }
+
+    /// Les dégâts reçus (somme, nombre de coups) pendant `[debut, fin]` : ce que
+    /// montre un combat, comme `morts_dans`.
+    pub fn recus_dans(&self, entity_id: i32, debut: i64, fin: i64) -> (i64, i32) {
+        self.inner.read().coups_recus.get(&entity_id)
+            .map(|v| v.iter().filter(|&&(t, _)| t >= debut && t <= fin)
+                .fold((0i64, 0i32), |(somme, n), &(_, d)| (somme + d, n + 1)))
+            .unwrap_or((0, 0))
+    }
+
+    /// Les soins donnés aux alliés pendant `[debut, fin]`.
+    pub fn soins_dans(&self, entity_id: i32, debut: i64, fin: i64) -> i64 {
+        self.inner.read().soins_donnes.get(&entity_id)
+            .map(|v| v.iter().filter(|&&(t, _)| t >= debut && t <= fin).map(|&(_, m)| m).sum())
             .unwrap_or(0)
     }
 
@@ -942,6 +970,8 @@ impl DataStorage {
             if inner.current_dungeon_id > 0 && inner.current_dungeon_id != dungeon_id {
                 inner.morts_par_entite.clear();
                 inner.heures_des_morts.clear();
+                inner.coups_recus.clear();
+                inner.soins_donnes.clear();
             }
             inner.current_dungeon_id = dungeon_id;
         }
@@ -1312,6 +1342,8 @@ impl DataStorage {
         inner.dead_entity_ids.clear();
         inner.morts_par_entite.clear();
         inner.heures_des_morts.clear();
+        inner.coups_recus.clear();
+        inner.soins_donnes.clear();
         inner.pv_precedents.clear();
         inner.zero_en_attente.clear();
         inner.has_boss_in_segment = false;

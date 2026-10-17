@@ -15,6 +15,9 @@ use crate::i18n::lookup::{NpcLookup, SkillLookup};
 /// above the entity-id range (real ids top out at 9,999,999) so it can never
 /// collide, and stays positive because the frontend discards non-positive ids.
 const PARTY_ROW_ID_BASE: i32 = 90_000_000;
+/// Grâce après la dernière frappe d'un combat : qui tombe, ou reçoit un coup, juste après
+/// y compte encore.
+const FENETRE_APRES_COMBAT_MS: i64 = 15_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TargetSelectionMode {
@@ -410,7 +413,7 @@ impl DpsCalculator {
             let debut = target_ids.iter().filter_map(|t| combat_data.get(t)).map(|d| d.first_damage_time).min();
             let fin = target_ids.iter().filter_map(|t| combat_data.get(t)).map(|d| d.last_damage_time).max();
             match (debut, fin) {
-                (Some(d), Some(f)) => (d, f + 15_000),
+                (Some(d), Some(f)) => (d, f + FENETRE_APRES_COMBAT_MS),
                 _ => (0, 0),
             }
         };
@@ -421,12 +424,6 @@ impl DpsCalculator {
         // Ajout XIII NRV : les soins par acteur, pour la colonne de l'overlay.
         // Ils sont répartis par cible : on les additionne une fois pour toutes
         // plutôt qu'une fois par joueur.
-        let mut soins: std::collections::HashMap<i32, i64> = std::collections::HashMap::new();
-        for cible in self.data_storage.get_combat_snapshot_light().values() {
-            for (acteur, donnees) in &cible.actors {
-                *soins.entry(*acteur).or_insert(0) += donnees.party_heal;
-            }
-        }
         let bt = battle_time.max(1000);
         let mut to_remove = Vec::new();
         for (&uid, data) in &mut dps_data.map {
@@ -436,7 +433,7 @@ impl DpsCalculator {
                 .get(&data.nickname)
                 .map(|m| m.combat_power)
                 .unwrap_or(0);
-            data.heal = soins.get(&uid).copied().unwrap_or(0);
+            data.heal = self.data_storage.soins_dans(uid, fenetre_morts.0, fenetre_morts.1);
             // Ajout XIII NRV : le nombre de morts, demandé pour l'overlay.
             // Les morts **du combat affiché**, comme Abyss DPS Meter : de la
             // première à la dernière frappe sur les cibles, plus 15 s de grâce
@@ -808,6 +805,7 @@ impl DpsCalculator {
             }
 
             let local_id = self.data_storage.local_player_id().unwrap_or(-1) as i32;
+            let fenetre = (target_data.first_damage_time, target_data.last_damage_time + FENETRE_APRES_COMBAT_MS);
             let actors: Vec<DetailsActorSummary> = record_actors.iter()
                 .map(|(&id, (nick, job))| {
                     // Ajout XIII NRV : les pseudos restent entiers.
@@ -835,16 +833,16 @@ impl DpsCalculator {
                             .map(|s| s.code)
                             .unwrap_or(0)
                     );
-                    // Aggregate per-actor stats across all targets
-                    let (mut party_heal, mut regen, mut dmg_recv, mut hits_recv) = (0i64, 0i64, 0i64, 0i32);
+                    // Coups reçus et soins : ceux de **ce** combat, par l'heure. Le
+                    // compteur de `ActorData` cumulait tous les boss du donjon.
+                    let mut regen = 0i64;
                     for td in combat_data.values() {
                         if let Some(ad) = td.actors.get(&id) {
-                            party_heal += ad.party_heal;
                             regen += ad.regen;
-                            dmg_recv += ad.damage_received;
-                            hits_recv += ad.hits_received;
                         }
                     }
+                    let (dmg_recv, hits_recv) = self.data_storage.recus_dans(id, fenetre.0, fenetre.1);
+                    let party_heal = self.data_storage.soins_dans(id, fenetre.0, fenetre.1);
                     // Joined on the unobscured nickname: the roster is keyed by
                     // name, and `display_nick` above has already been masked for
                     // everyone but the local player.
@@ -1016,7 +1014,7 @@ impl DpsCalculator {
             let debut = combat_data.values().map(|d| d.first_damage_time).min();
             let fin = combat_data.values().map(|d| d.last_damage_time).max();
             match (debut, fin) {
-                (Some(d), Some(f)) => (d, f + 15_000),
+                (Some(d), Some(f)) => (d, f + FENETRE_APRES_COMBAT_MS),
                 _ => (0, 0),
             }
         };
@@ -1032,15 +1030,12 @@ impl DpsCalculator {
                         .unwrap_or(0)
                 ) { jc.class_prefix() } else { 0 };
                 // Aggregate per-actor stats
-                let (mut party_heal, mut regen, mut dmg_recv, mut hits_recv) = (0i64, 0i64, 0i64, 0i32);
+                let mut regen = 0i64;
                 // « Temps forts » : premier coup, plus gros coup direct et sa compétence.
                 let (mut premier_coup, mut gros_coup, mut gros_coup_code) = (0i64, 0i32, 0i32);
                 for td in combat_data.values() {
                     if let Some(ad) = td.actors.get(&id) {
-                        party_heal += ad.party_heal;
                         regen += ad.regen;
-                        dmg_recv += ad.damage_received;
-                        hits_recv += ad.hits_received;
                         if ad.first_damage_time > 0 && (premier_coup == 0 || ad.first_damage_time < premier_coup) {
                             premier_coup = ad.first_damage_time;
                         }
@@ -1053,6 +1048,8 @@ impl DpsCalculator {
                     }
                 }
                 let morts = self.data_storage.morts_dans(id, fenetre_morts.0, fenetre_morts.1);
+                let (dmg_recv, hits_recv) = self.data_storage.recus_dans(id, fenetre_morts.0, fenetre_morts.1);
+                let party_heal = self.data_storage.soins_dans(id, fenetre_morts.0, fenetre_morts.1);
                 DetailsActorSummary {
                     actor_id: id,
                     nickname: nick.clone(),
@@ -1705,5 +1702,67 @@ mod tests_temps_forts {
         assert_eq!(deux.max_hit, 300);
         assert_eq!(un.deaths, 0);
         assert_eq!(deux.deaths, 1);
+    }
+
+    /// Relevé le 17/10/2026 (Auldor sacré, dernier boss d'un donjon) : dégâts subis
+    /// 1,07 M contre 553 k chez Abyss. Les coups reçus et les soins s'ajoutaient sur
+    /// une seule cible par joueur et cumulaient tous les boss déjà vus.
+    #[test]
+    fn les_degats_subis_et_les_soins_dun_boss_ne_contiennent_pas_ceux_du_precedent() {
+        let npcs = Arc::new(NpcLookup::new());
+        npcs.load_from_json(
+            r#"{"2000001":{"name":"Premier","isBoss":true},"2000002":{"name":"Second","isBoss":true}}"#,
+        );
+        let stockage = Arc::new(DataStorage::new());
+        stockage.append_mob(900, 2_000_001);
+        stockage.append_mob(901, 2_000_002);
+
+        let coup_de_monstre = |monstre: i32, joueur: i32, instant: i64, degats: i32| {
+            let mut p = ParsedDamagePacket::new();
+            p.set_actor_id(monstre);
+            p.set_target_id(joueur);
+            p.set_skill_code(1_606_940);
+            p.set_damage(degats);
+            p.set_timestamp(instant);
+            p
+        };
+
+        // Premier boss : de 1 s à 8 s. Deux joueurs frappent ; le joueur 2 soigne le 1.
+        stockage.append_damage(coup(1, 900, 1_000, 100, false));
+        stockage.append_damage(coup(2, 900, 1_000, 100, false));
+        stockage.append_damage(coup(1, 900, 8_000, 100, false));
+        stockage.append_damage(coup_de_monstre(900, 1, 3_000, 500));
+        stockage.append_damage(coup(2, 1, 3_500, 700, false));
+        // Second boss : de 60 s à 67 s.
+        stockage.append_damage(coup(1, 901, 60_000, 100, false));
+        stockage.append_damage(coup(2, 901, 60_000, 100, false));
+        stockage.append_damage(coup(1, 901, 67_000, 100, false));
+        stockage.append_damage(coup_de_monstre(901, 1, 62_000, 300));
+        stockage.append_damage(coup(2, 1, 62_500, 200, false));
+
+        let mut calc = DpsCalculator::new(
+            stockage,
+            Arc::new(SkillLookup::new()),
+            npcs,
+            Arc::new(PingTracker::new()),
+        );
+        let releves = calc.snapshot_boss_fights_force();
+        let dans = |cible: i32, acteur: i32| {
+            releves
+                .iter()
+                .find(|r| r.target_id == cible)
+                .unwrap_or_else(|| panic!("combat {cible} non relevé"))
+                .actors
+                .iter()
+                .find(|a| a.actor_id == acteur)
+                .unwrap_or_else(|| panic!("acteur {acteur} absent du combat {cible}"))
+                .clone()
+        };
+
+        assert_eq!(dans(900, 1).damage_received, 500);
+        assert_eq!(dans(901, 1).damage_received, 300, "le second boss ne reprend pas les 500 du premier");
+        assert_eq!(dans(901, 1).hits_received, 1);
+        assert_eq!(dans(900, 2).party_heal, 700);
+        assert_eq!(dans(901, 2).party_heal, 200, "les soins du premier boss ne sont pas repris");
     }
 }
