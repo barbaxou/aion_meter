@@ -225,9 +225,26 @@ impl DpsCalculator {
         // Collect actors from selected targets
         let mut combined_actors: HashMap<i32, i64> = HashMap::new();
         let mut combined_jobs: HashMap<i32, Option<JobClass>> = HashMap::new();
+        // Ajout XIII NRV : en mode TARGET, seuls vous, vos invocations et votre groupe
+        // comptent (Abyss : « Capture du groupe uniquement »). Les boss ne changent pas.
+        let seulement_le_groupe = self.target_selection_mode == TargetSelectionMode::LastHitByMe;
+        let ids_locaux = if seulement_le_groupe { self.resolve_local_ids(&summon_data) } else { None };
+        let noms_du_groupe: HashSet<String> = if seulement_le_groupe {
+            self.data_storage.get_party_members().keys().map(|n| n.trim().to_lowercase()).collect()
+        } else {
+            HashSet::new()
+        };
         for &tid in &target_ids {
             if let Some(target_data) = combat_data.get(&tid) {
                 for (&actor_id, actor_data) in &target_data.actors {
+                    if seulement_le_groupe {
+                        let resolu = summon_resolver::resolve(actor_id, &summon_data);
+                        let est_local = ids_locaux.as_ref().is_some_and(|ids| ids.contains(&resolu) || ids.contains(&actor_id));
+                        let nom = resolve_nickname(resolu, &nickname_data, &summon_data).trim().to_lowercase();
+                        if !est_local && !noms_du_groupe.contains(&nom) {
+                            continue;
+                        }
+                    }
                     *combined_actors.entry(actor_id).or_insert(0) += actor_data.total_damage;
                     if actor_data.job.is_some() && combined_jobs.get(&actor_id).and_then(|j| j.as_ref()).is_none() {
                         combined_jobs.insert(actor_id, actor_data.job);
@@ -688,16 +705,10 @@ impl DpsCalculator {
                         None => (HashSet::new(), String::new(), 0),
                     }
                 } else {
-                    // Not identified — fall back to most recently damaged target
-                    let best = combat_data.iter()
-                        .max_by_key(|(_, td)| td.last_damage_time);
-                    match best {
-                        Some((&id, _)) => {
-                            let name = self.resolve_target_name(id);
-                            (HashSet::from([id]), name, id)
-                        }
-                        None => (HashSet::new(), String::new(), 0),
-                    }
+                    // Ajout XIII NRV : joueur local inconnu → on ne suit personne. L'ancien
+                    // repli prenait la cible la plus récemment frappée par n'importe qui,
+                    // c'est-à-dire le combat d'un autre joueur.
+                    (HashSet::new(), String::new(), 0)
                 }
             }
         }
@@ -1881,6 +1892,58 @@ mod tests_temps_forts {
             dps.map.values().all(|d| d.amount == 0.0 && d.dps == 0.0),
             "aucun dégât de l'ancien combat ne reste"
         );
+    }
+
+    fn calculateur_cible() -> (Arc<DataStorage>, DpsCalculator) {
+        let stockage = Arc::new(DataStorage::new());
+        let mut calc = DpsCalculator::new(
+            stockage.clone(),
+            Arc::new(SkillLookup::new()),
+            Arc::new(NpcLookup::new()),
+            Arc::new(PingTracker::new()),
+        );
+        calc.set_target_selection_mode("lastHitByMe");
+        (stockage, calc)
+    }
+
+    fn membre(slot: u8) -> crate::combat::data_storage::PartyMember {
+        crate::combat::data_storage::PartyMember { slot, ..Default::default() }
+    }
+
+    /// 17/10/2026 : le mode TARGET comptait aussi les joueurs étrangers au groupe qui
+    /// frappent la même cible (Abyss : « Capture du groupe uniquement »).
+    #[test]
+    fn le_mode_target_ignore_les_joueurs_hors_groupe() {
+        let (stockage, mut calc) = calculateur_cible();
+        stockage.set_local_player_id(Some(1));
+        stockage.append_nickname_authoritative(1, "Moi");
+        stockage.append_nickname_authoritative(2, "Etranger");
+        stockage.append_nickname_authoritative(3, "Ami");
+        stockage.set_party_roster(vec![("Moi".into(), membre(0)), ("Ami".into(), membre(1))], true);
+        stockage.append_damage(coup(1, 900, 1_000, 500, false));
+        stockage.append_damage(coup(2, 900, 1_500, 700, false));
+        stockage.append_damage(coup(3, 900, 1_200, 300, false));
+
+        let dps = calc.get_dps();
+        let frappeurs: Vec<String> = {
+            let mut v: Vec<String> = dps.map.values().filter(|d| d.amount > 0.0).map(|d| d.nickname.clone()).collect();
+            v.sort();
+            v
+        };
+        assert_eq!(frappeurs, ["Ami", "Moi"], "l'étranger n'entre pas dans le combat");
+    }
+
+    /// Identifiant local inconnu : l'ancien repli prenait la cible la plus récemment
+    /// frappée par n'importe qui, donc le combat d'un autre joueur.
+    #[test]
+    fn le_mode_target_ne_suit_personne_si_le_joueur_local_est_inconnu() {
+        let (stockage, mut calc) = calculateur_cible();
+        stockage.append_nickname_authoritative(2, "Etranger");
+        stockage.append_damage(coup(2, 900, 1_500, 700, false));
+
+        let dps = calc.get_dps();
+        assert_eq!(dps.target_id, 0, "aucune cible suivie");
+        assert!(dps.map.values().all(|d| d.amount == 0.0), "aucun dégât d'un autre joueur");
     }
 
     /// Le serveur rejoue le même roster des dizaines de fois par seconde : ce n'est pas
