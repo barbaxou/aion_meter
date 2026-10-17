@@ -697,6 +697,27 @@ impl DpsCalculator {
                             }
                         }
                     }
+                    // Ajout XIII NRV : arrivé après les autres, vous n'avez pas encore frappé ;
+                    // on suit alors la cible la plus récemment frappée par un membre du groupe
+                    // (Abyss compte dès qu'un membre du groupe frappe). Les étrangers au
+                    // groupe ne comptent pas.
+                    if best_target.is_none() {
+                        let noms_du_groupe: HashSet<String> = self.data_storage
+                            .get_party_members().keys().map(|n| n.trim().to_lowercase()).collect();
+                        let nicknames = self.data_storage.get_nicknames();
+                        for (&target_id, target_data) in combat_data {
+                            for (&actor_id, actor_data) in &target_data.actors {
+                                let resolved = summon_resolver::resolve(actor_id, summon_data);
+                                let nom = resolve_nickname(resolved, &nicknames, summon_data).trim().to_lowercase();
+                                if noms_du_groupe.contains(&nom) {
+                                    let ts = actor_data.last_damage_time;
+                                    if best_target.is_none() || ts > best_target.unwrap().1 {
+                                        best_target = Some((target_id, ts));
+                                    }
+                                }
+                            }
+                        }
+                    }
                     match best_target {
                         Some((id, _)) => {
                             let name = self.resolve_target_name(id);
@@ -1944,6 +1965,28 @@ mod tests_temps_forts {
         let dps = calc.get_dps();
         assert_eq!(dps.target_id, 0, "aucune cible suivie");
         assert!(dps.map.values().all(|d| d.amount == 0.0), "aucun dégât d'un autre joueur");
+    }
+
+    /// 17/10/2026, raid : arrivé après les autres, le joueur local n'avait pas encore frappé ;
+    /// le mode TARGET ne suivait aucune cible et l'overlay restait à zéro pendant que le
+    /// groupe combattait (Abyss compte dès qu'un membre du groupe frappe).
+    #[test]
+    fn le_mode_target_suit_la_cible_du_groupe_avant_le_premier_coup_local() {
+        let (stockage, mut calc) = calculateur_cible();
+        stockage.set_local_player_id(Some(1));
+        stockage.append_nickname_authoritative(1, "Moi");
+        stockage.append_nickname_authoritative(2, "Etranger");
+        stockage.append_nickname_authoritative(3, "Ami");
+        stockage.set_party_roster(vec![("Moi".into(), membre(0)), ("Ami".into(), membre(1))], true);
+        stockage.append_damage(coup(3, 900, 1_000, 500, false));
+        // Un étranger frappe une autre cible, plus tard : il ne doit pas détourner le suivi.
+        stockage.append_damage(coup(2, 901, 1_500, 700, false));
+
+        let dps = calc.get_dps();
+        assert_eq!(dps.target_id, 900, "la cible du groupe est suivie");
+        let ami = dps.map.values().find(|d| d.nickname == "Ami").expect("l'ami est listé");
+        assert_eq!(ami.amount, 500.0);
+        assert!(dps.map.values().all(|d| d.nickname != "Etranger" || d.amount == 0.0));
     }
 
     /// Le serveur rejoue le même roster des dizaines de fois par seconde : ce n'est pas
