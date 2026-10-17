@@ -1054,9 +1054,18 @@ class DpsApp {
     } else if (!isOutOfCombat) {
       this.lastSnapshot = rows;
     } else if (this.lastSnapshot) {
-      const updatedSnapshot = this.updateSnapshotNicknameForUser(rows, this.lastSnapshot);
-      this.lastSnapshot = updatedSnapshot;
-      rowsToRender = updatedSnapshot;
+      // Ajout XIII NRV : hors combat, un nouveau groupe sans dégâts remplace l'ancien
+      // (voir groupeHorsCombat.js) ; un combat terminé, lui, reste lisible.
+      const nouveauGroupe = window.GroupeHorsCombat?.remplacerParLeGroupe(rows, this.lastSnapshot);
+      if (nouveauGroupe) {
+        this.lastSnapshot = nouveauGroupe;
+        rowsToRender = nouveauGroupe;
+        listReasons.push("new party roster shown");
+      } else {
+        const updatedSnapshot = this.updateSnapshotNicknameForUser(rows, this.lastSnapshot);
+        this.lastSnapshot = updatedSnapshot;
+        rowsToRender = updatedSnapshot;
+      }
     } else {
       this.lastSnapshot = rows;
       rowsToRender = rows;
