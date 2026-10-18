@@ -37,6 +37,9 @@ const PARTY_PLACEHOLDER_MS: i64 = 10 * 60 * 1000;
 /// à zéro, paquet de mort, paquet vu deux fois). Une réanimation prend bien plus longtemps.
 const FENETRE_MEME_MORT_MS: i64 = 1500;
 
+/// Borne haute d'un numéro de compétence dans le paquet de mort (voir `noter_mort_par_paquet`).
+const COMPETENCE_MAX_MORT: u32 = 100_000_000;
+
 fn now_ms() -> i64 {
     crate::clock::now_ms()
 }
@@ -936,7 +939,14 @@ impl DataStorage {
     /// positive entre deux morts rapprochées (réanimation puis nouvelle mort en dix secondes).
     /// Seuls les joueurs connus s'inscrivent (les monstres meurent par milliers). La même
     /// mort vue par les PV et par le paquet ne compte qu'une fois : fenêtre de 1,5 s.
-    pub fn noter_mort_par_paquet(&self, entity_id: i32) -> bool {
+    ///
+    /// `competence` est le champ de 4 octets qui suit la victime. Une vraie mort y porte un
+    /// numéro de compétence (au plus 99 617 072 sur le rejeu du 17/10/2026) ; l'autre variante
+    /// de `04 8D` y porte des valeurs de 101 millions et plus, et n'est pas une mort.
+    pub fn noter_mort_par_paquet(&self, entity_id: i32, competence: u32) -> bool {
+        if competence >= COMPETENCE_MAX_MORT {
+            return false;
+        }
         let mut inner = self.inner.write();
         if !inner.known_player_ids.contains(&entity_id) && !inner.nickname_storage.contains_key(&entity_id) {
             return false;

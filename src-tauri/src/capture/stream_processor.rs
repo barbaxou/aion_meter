@@ -737,7 +737,8 @@ impl StreamProcessor {
             return false;
         }
         // Ajout XIII NRV : c'est aussi le paquet de mort (victime, compétence, tueur).
-        self.data_storage.noter_mort_par_paquet(summon_id);
+        let competence = u32::from_le_bytes([packet[pos], packet[pos + 1], packet[pos + 2], packet[pos + 3]]);
+        self.data_storage.noter_mort_par_paquet(summon_id, competence);
         pos += 4;
 
         let owner_info = read_varint(packet, pos);
@@ -863,7 +864,9 @@ impl StreamProcessor {
                 continue;
             }
             // Ajout XIII NRV : c'est aussi le paquet de mort (victime, compétence, tueur).
-            self.data_storage.noter_mort_par_paquet(summon_id);
+            let c = fixed_field_start;
+            let competence = u32::from_le_bytes([data[c], data[c + 1], data[c + 2], data[c + 3]]);
+            self.data_storage.noter_mort_par_paquet(summon_id, competence);
 
             // The owner follows: `<owner varint> <server id u16 LE> <len><name>`.
             // The server id was once matched as the literal bytes `E0 07` /
@@ -3278,6 +3281,34 @@ mod tests {
         // Une victime inconnue (un monstre) ne s'inscrit pas.
         processor.scan_for_embedded_04_8d(&mort(&[0x9f, 0x8d, 0x06]));
         assert_eq!(stockage.morts(0x9f | (0x0d << 7) | (6 << 14)), 0);
+    }
+
+    /// 17/10/2026 : le rejeu de la soirée montre que `04 8D` existe en deux variantes. Sur 1 023
+    /// morts « paquet », 709 n'avaient aucune mort chez Abyss, et 629 d'entre elles portaient
+    /// sur 4 octets une valeur de 101 millions et plus (ex. `01 01 03 98` à 22:04:19, victime 13883)
+    /// là où une vraie mort porte un numéro de compétence (15 250 340, 17 070 130…).
+    #[test]
+    fn un_paquet_04_8d_sans_numero_de_competence_n_est_pas_une_mort() {
+        let stockage = Arc::new(DataStorage::new());
+        stockage.append_nickname_authoritative(5364, "Moi");
+        let processor = StreamProcessor::new(
+            stockage.clone(),
+            Arc::new(SkillLookup::new()),
+            Arc::new(NpcLookup::new()),
+        );
+        let paquet = |competence: [u8; 4]| {
+            [
+                &[0x04u8, 0x8d, 0xf4, 0x29][..],
+                &competence[..],
+                &[0xbb, 0x93, 0x01, 0, 0, 0, 0, 0, 0],
+                &[0xe4, 0xeb, 0x8f, 0x01, 0, 0, 0, 0, 0x01, 0x02],
+            ]
+            .concat()
+        };
+        processor.scan_for_embedded_04_8d(&paquet([0x01, 0x01, 0x03, 0x98]));
+        assert_eq!(stockage.morts(5364), 0, "valeur 2 550 137 089 : pas une compétence");
+        processor.scan_for_embedded_04_8d(&paquet([0xae, 0xb1, 0x17, 0x01]));
+        assert_eq!(stockage.morts(5364), 1, "compétence 18 330 030 : une vraie mort");
     }
 
     /// Les octets viennent de la capture réelle du 17/10/2026 (identiques à ceux qu'Abyss lit) ;
